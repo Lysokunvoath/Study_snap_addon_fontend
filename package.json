@@ -2,8 +2,8 @@
   "name": "study-snap-addon-frontend",
   "private": true,
   "scripts": {
-    "build": "webpack",
-    "build:watch": "webpack --watch"
+    "build": "node ./node_modules/webpack/bin/webpack.js",
+    "build:watch": "node ./node_modules/webpack/bin/webpack.js --watch"
   },
   "dependencies": {
     "@googleworkspace/meet-addons": "^1.2.0"
