@@ -1,0 +1,19 @@
+{
+  "addOns": {
+    "common": {
+      "name": "Study Snap",
+      "logoUrl": "https://study-snap-addon-fontend-phi.vercel.app/logo.svg"
+    },
+    "meet": {
+      "web": {
+        "sidePanelUrl": "https://study-snap-addon-fontend-phi.vercel.app/side-panel",
+        "supportsScreenSharing": false,
+        "addOnOrigins": [
+          "https://study-snap-addon-fontend-phi.vercel.app"
+        ],
+        "logoUrl": "https://study-snap-addon-fontend-phi.vercel.app/logo.svg",
+        "darkModeLogoUrl": "https://study-snap-addon-fontend-phi.vercel.app/logo-dark.svg"
+      }
+    }
+  }
+}
