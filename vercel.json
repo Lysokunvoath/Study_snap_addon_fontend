@@ -3,6 +3,20 @@
   "installCommand": "npm install",
   "buildCommand": "npm run build",
   "outputDirectory": ".",
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/SidePanel.html"
+    },
+    {
+      "source": "/side-panel",
+      "destination": "/SidePanel.html"
+    },
+    {
+      "source": "/main-stage",
+      "destination": "/MainStage.html"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
