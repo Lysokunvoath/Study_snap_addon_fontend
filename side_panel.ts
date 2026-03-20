@@ -1,6 +1,6 @@
 import { meet } from '@googleworkspace/meet-addons/meet.addons';
 
-const CLOUD_PROJECT_NUMBER = '980889141066';
+const CLOUD_PROJECT_NUMBER: string = '980889141066';
 
 declare global {
   interface Window {
