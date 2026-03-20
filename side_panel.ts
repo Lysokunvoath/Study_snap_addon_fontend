@@ -12,7 +12,7 @@ declare global {
 }
 
 function getCloudProjectNumber(): string {
-  if (CLOUD_PROJECT_NUMBER === '980889141066') {
+  if (CLOUD_PROJECT_NUMBER === 'REPLACE_WITH_YOUR_CLOUD_PROJECT_NUMBER') {
     throw new Error(
       'Set CLOUD_PROJECT_NUMBER in side_panel.ts before running inside Meet.'
     );
