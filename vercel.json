@@ -15,6 +15,10 @@
     {
       "source": "/main-stage",
       "destination": "/MainStage.html"
+    },
+    {
+      "source": "/recorder",
+      "destination": "/Recorder.html"
     }
   ],
   "headers": [

@@ -2,6 +2,7 @@ import { meet } from '@googleworkspace/meet-addons/meet.addons';
 
 const CLOUD_PROJECT_NUMBER: string = '980889141066';
 const MAIN_STAGE_CHANNEL_NAME = 'study-snap-transcript';
+const RECORDER_CONTROL_CHANNEL_NAME = 'study-snap-recorder-control';
 const BACKEND_URL_STORAGE_KEY = 'studySnap.backendUrl';
 const DEFAULT_BACKEND_BASE_URL =
   'https://studysnapaddonbackend-production.up.railway.app';
@@ -11,6 +12,12 @@ type MainStageEvent =
   | { type: 'partial'; payload: { text: string } }
   | { type: 'final'; payload: { text: string } }
   | { type: 'clear'; payload: Record<string, never> };
+
+type RecorderControlEvent =
+  | { type: 'start'; payload: Record<string, never> }
+  | { type: 'stop'; payload: Record<string, never> }
+  | { type: 'clear'; payload: Record<string, never> }
+  | { type: 'syncBackendUrl'; payload: { baseUrl: string } };
 
 type TranscriptMessage = {
   type?: string;
@@ -42,12 +49,14 @@ const transcriptionState: TranscriptionState = {
 };
 
 let mainStageChannel: BroadcastChannel | null = null;
+let recorderControlChannel: BroadcastChannel | null = null;
 
 declare global {
   interface Window {
     studySnapAddon: {
       setUpSidePanel: () => Promise<void>;
       initializeMainStage: () => Promise<void>;
+      initializeRecorderPage: () => Promise<void>;
     };
   }
 }
@@ -64,6 +73,15 @@ function getCloudProjectNumber(): string {
 
 function getDefaultMainStageUrl(): string {
   return new URL('./MainStage.html', window.location.href).toString();
+}
+
+function getDefaultRecorderUrl(): string {
+  return new URL('./Recorder.html', window.location.href).toString();
+}
+
+function isRecorderPage(): boolean {
+  const path = window.location.pathname.toLowerCase();
+  return path.endsWith('/recorder') || path.endsWith('/recorder.html');
 }
 
 function normalizeBaseUrl(rawUrl: string): string {
@@ -139,16 +157,18 @@ function toWsUrl(baseUrl: string): string {
   throw new Error('Backend URL must start with http:// or https://');
 }
 
-function setStatus(text: string): void {
+function setStatus(text: string, shouldBroadcast = true): void {
   const status = document.getElementById('transcription-status');
   if (status) {
     status.textContent = text;
   }
 
-  emitMainStageEvent({
-    type: 'status',
-    payload: { text },
-  });
+  if (shouldBroadcast) {
+    emitMainStageEvent({
+      type: 'status',
+      payload: { text },
+    });
+  }
 }
 
 function getMainStageChannel(): BroadcastChannel | null {
@@ -165,6 +185,27 @@ function getMainStageChannel(): BroadcastChannel | null {
 
 function emitMainStageEvent(event: MainStageEvent): void {
   const channel = getMainStageChannel();
+  if (!channel) {
+    return;
+  }
+
+  channel.postMessage(event);
+}
+
+function getRecorderControlChannel(): BroadcastChannel | null {
+  if (typeof BroadcastChannel === 'undefined') {
+    return null;
+  }
+
+  if (!recorderControlChannel) {
+    recorderControlChannel = new BroadcastChannel(RECORDER_CONTROL_CHANNEL_NAME);
+  }
+
+  return recorderControlChannel;
+}
+
+function emitRecorderControlEvent(event: RecorderControlEvent): void {
+  const channel = getRecorderControlChannel();
   if (!channel) {
     return;
   }
@@ -232,7 +273,7 @@ async function createSessionToken(baseUrl: string): Promise<string> {
   return body.token;
 }
 
-function appendFinalLine(text: string): void {
+function appendFinalLine(text: string, shouldBroadcast = true): void {
   const transcript = document.getElementById('transcript');
   if (!transcript) {
     return;
@@ -254,13 +295,15 @@ function appendFinalLine(text: string): void {
   transcript.appendChild(line);
   transcript.scrollTop = transcript.scrollHeight;
 
-  emitMainStageEvent({
-    type: 'final',
-    payload: { text },
-  });
+  if (shouldBroadcast) {
+    emitMainStageEvent({
+      type: 'final',
+      payload: { text },
+    });
+  }
 }
 
-function upsertPartialLine(text: string): void {
+function upsertPartialLine(text: string, shouldBroadcast = true): void {
   const transcript = document.getElementById('transcript');
   if (!transcript) {
     return;
@@ -281,13 +324,15 @@ function upsertPartialLine(text: string): void {
   transcriptionState.partialLine.textContent = text;
   transcript.scrollTop = transcript.scrollHeight;
 
-  emitMainStageEvent({
-    type: 'partial',
-    payload: { text },
-  });
+  if (shouldBroadcast) {
+    emitMainStageEvent({
+      type: 'partial',
+      payload: { text },
+    });
+  }
 }
 
-function clearTranscript(): void {
+function clearTranscript(shouldBroadcast = true): void {
   const transcript = document.getElementById('transcript');
   if (!transcript) {
     return;
@@ -296,10 +341,12 @@ function clearTranscript(): void {
   transcript.innerHTML = '<div class="empty">Transcript will appear here.</div>';
   transcriptionState.partialLine = null;
 
-  emitMainStageEvent({
-    type: 'clear',
-    payload: {},
-  });
+  if (shouldBroadcast) {
+    emitMainStageEvent({
+      type: 'clear',
+      payload: {},
+    });
+  }
 }
 
 function clearMainStageTranscript(): void {
@@ -399,6 +446,81 @@ function setupMainStageTranscriptBridge(): void {
   setMainStageStatus('Waiting for transcription...');
 }
 
+function setupSidePanelTranscriptBridge(): void {
+  const channel = getMainStageChannel();
+  if (!channel) {
+    return;
+  }
+
+  channel.onmessage = (event: MessageEvent<MainStageEvent>) => {
+    const message = event.data;
+
+    if (message.type === 'status') {
+      setStatus(message.payload.text, false);
+      return;
+    }
+
+    if (message.type === 'partial') {
+      upsertPartialLine(message.payload.text, false);
+      return;
+    }
+
+    if (message.type === 'final') {
+      appendFinalLine(message.payload.text, false);
+      return;
+    }
+
+    if (message.type === 'clear') {
+      clearTranscript(false);
+      setStatus('Idle', false);
+    }
+  };
+}
+
+function setupRecorderControlBridge(): void {
+  const channel = getRecorderControlChannel();
+  if (!channel) {
+    return;
+  }
+
+  channel.onmessage = (event: MessageEvent<RecorderControlEvent>) => {
+    const message = event.data;
+
+    if (message.type === 'start') {
+      startTranscription().catch((error) => {
+        setStatus(`Start failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+      return;
+    }
+
+    if (message.type === 'stop') {
+      stopTranscription().catch((error) => {
+        setStatus(`Stop failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+      return;
+    }
+
+    if (message.type === 'clear') {
+      clearTranscript();
+      return;
+    }
+
+    if (message.type === 'syncBackendUrl') {
+      setStoredBackendBaseUrl(message.payload.baseUrl);
+      initializeBackendUrlInput();
+    }
+  };
+}
+
+function openRecorderWindow(autoStart = false): void {
+  const recorderUrl = new URL(getDefaultRecorderUrl());
+  if (autoStart) {
+    recorderUrl.searchParams.set('autostart', '1');
+  }
+
+  window.open(recorderUrl.toString(), '_blank', 'noopener,noreferrer');
+}
+
 function handleServerMessage(event: MessageEvent): void {
   try {
     const message = JSON.parse(String(event.data)) as TranscriptMessage;
@@ -467,6 +589,10 @@ async function stopTranscription(): Promise<void> {
 }
 
 async function startTranscription(): Promise<void> {
+  if (!isRecorderPage() && window.top !== window.self) {
+    throw new Error('Microphone is blocked in Meet iframe. Use Open Recorder Window.');
+  }
+
   if (transcriptionState.ws) {
     return;
   }
@@ -582,25 +708,32 @@ export async function setUpSidePanel(): Promise<void> {
   });
 
   startTranscriptionButton.addEventListener('click', () => {
-    startTranscription().catch((error) => {
-      setStatus(`Start failed: ${error instanceof Error ? error.message : String(error)}`);
+    const baseUrl = getBackendBaseUrl();
+    setStoredBackendBaseUrl(baseUrl);
+    emitRecorderControlEvent({
+      type: 'syncBackendUrl',
+      payload: { baseUrl },
     });
+    openRecorderWindow(true);
+    emitRecorderControlEvent({ type: 'start', payload: {} });
+    setStatus('Recorder window opened. Start/Stop runs there.');
   });
 
   stopTranscriptionButton.addEventListener('click', () => {
-    stopTranscription().catch((error) => {
-      setStatus(`Stop failed: ${error instanceof Error ? error.message : String(error)}`);
-    });
+    emitRecorderControlEvent({ type: 'stop', payload: {} });
+    setStatus('Sent stop command to recorder window.');
   });
 
   clearButton.addEventListener('click', () => {
     clearTranscript();
+    emitRecorderControlEvent({ type: 'clear', payload: {} });
   });
 
+  setupSidePanelTranscriptBridge();
   initializeBackendUrlInput();
   clearTranscript();
   setControlState(false);
-  setStatus('Idle');
+  setStatus('Ready. Click Start Transcription to open recorder window.');
 }
 
 export async function initializeMainStage(): Promise<void> {
@@ -612,7 +745,48 @@ export async function initializeMainStage(): Promise<void> {
   setupMainStageTranscriptBridge();
 }
 
+export async function initializeRecorderPage(): Promise<void> {
+  initializeBackendUrlInput();
+  setupRecorderControlBridge();
+
+  const startButton = document.getElementById('start-transcription');
+  const stopButton = document.getElementById('stop-transcription');
+  const clearButton = document.getElementById('clear-transcript');
+
+  if (!startButton || !stopButton || !clearButton) {
+    throw new Error('Recorder page controls were not found.');
+  }
+
+  startButton.addEventListener('click', () => {
+    startTranscription().catch((error) => {
+      setStatus(`Start failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  });
+
+  stopButton.addEventListener('click', () => {
+    stopTranscription().catch((error) => {
+      setStatus(`Stop failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  });
+
+  clearButton.addEventListener('click', () => {
+    clearTranscript();
+  });
+
+  clearTranscript();
+  setControlState(false);
+  setStatus('Ready to record microphone outside Meet.');
+
+  const query = new URLSearchParams(window.location.search);
+  if (query.get('autostart') === '1') {
+    startTranscription().catch((error) => {
+      setStatus(`Start failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+}
+
 window.studySnapAddon = {
   setUpSidePanel,
   initializeMainStage,
+  initializeRecorderPage,
 };
