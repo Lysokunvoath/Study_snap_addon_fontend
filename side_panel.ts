@@ -2,6 +2,9 @@ import { meet } from '@googleworkspace/meet-addons/meet.addons';
 
 const CLOUD_PROJECT_NUMBER: string = '980889141066';
 const MAIN_STAGE_CHANNEL_NAME = 'study-snap-transcript';
+const BACKEND_URL_STORAGE_KEY = 'studySnap.backendUrl';
+const DEFAULT_BACKEND_BASE_URL =
+  'https://studysnapaddonbackend-production.up.railway.app';
 
 type MainStageEvent =
   | { type: 'status'; payload: { text: string } }
@@ -63,16 +66,65 @@ function getDefaultMainStageUrl(): string {
   return new URL('./MainStage.html', window.location.href).toString();
 }
 
+function normalizeBaseUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  const withoutTrailingSlash = trimmed.replace(/\/+$/, '');
+
+  return withoutTrailingSlash;
+}
+
+function getStoredBackendBaseUrl(): string | null {
+  try {
+    const value = window.localStorage.getItem(BACKEND_URL_STORAGE_KEY);
+    if (!value) {
+      return null;
+    }
+
+    const normalized = normalizeBaseUrl(value);
+    return normalized || null;
+  } catch {
+    return null;
+  }
+}
+
+function setStoredBackendBaseUrl(baseUrl: string): void {
+  try {
+    window.localStorage.setItem(BACKEND_URL_STORAGE_KEY, baseUrl);
+  } catch {
+    // Ignore storage errors (private mode, blocked storage, etc.).
+  }
+}
+
+function initializeBackendUrlInput(): void {
+  const input = document.getElementById('backend-url') as HTMLInputElement | null;
+  if (!input) {
+    return;
+  }
+
+  const stored = getStoredBackendBaseUrl();
+  const defaultValue = stored ?? DEFAULT_BACKEND_BASE_URL;
+  input.value = defaultValue;
+
+  input.addEventListener('change', () => {
+    const normalized = normalizeBaseUrl(input.value) || DEFAULT_BACKEND_BASE_URL;
+    input.value = normalized;
+    setStoredBackendBaseUrl(normalized);
+  });
+}
+
 function getBackendBaseUrl(): string {
   const input = document.getElementById('backend-url') as HTMLInputElement | null;
-  const fallback = 'http://localhost:8080';
+  const fallback = getStoredBackendBaseUrl() ?? DEFAULT_BACKEND_BASE_URL;
 
   if (!input) {
     return fallback;
   }
 
-  const value = input.value.trim();
-  return value || fallback;
+  const value = normalizeBaseUrl(input.value);
+  const resolved = value || fallback;
+
+  setStoredBackendBaseUrl(resolved);
+  return resolved;
 }
 
 function toWsUrl(baseUrl: string): string {
@@ -545,6 +597,7 @@ export async function setUpSidePanel(): Promise<void> {
     clearTranscript();
   });
 
+  initializeBackendUrlInput();
   clearTranscript();
   setControlState(false);
   setStatus('Idle');
