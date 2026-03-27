@@ -21,7 +21,7 @@
         border: 1px solid #dce3ec;
         border-radius: 14px;
         padding: 24px;
-        max-width: 560px;
+        max-width: 840px;
         width: calc(100% - 32px);
         box-sizing: border-box;
       }
@@ -32,8 +32,47 @@
       }
 
       p {
-        margin: 0;
+        margin: 0 0 12px;
         font-size: 16px;
+      }
+
+      .status {
+        font-size: 13px;
+        border-radius: 999px;
+        display: inline-block;
+        padding: 6px 10px;
+        background: #e9f2ff;
+        color: #0c3d82;
+        margin: 0 0 12px;
+      }
+
+      .transcript {
+        border: 1px solid #dce3ec;
+        border-radius: 10px;
+        background: #f9fbff;
+        min-height: 220px;
+        max-height: 380px;
+        overflow: auto;
+        padding: 12px;
+        font-size: 16px;
+        line-height: 1.5;
+      }
+
+      .transcript .empty {
+        color: #6b7280;
+      }
+
+      .line {
+        margin: 0 0 10px;
+      }
+
+      .line.partial {
+        color: #425466;
+        font-style: italic;
+      }
+
+      .line.final {
+        color: #102a4a;
       }
     </style>
   </head>
@@ -41,6 +80,10 @@
     <div class="panel">
       <h1>Study Snap Main Stage</h1>
       <p>Everyone in the meeting can see this view.</p>
+      <div id="mainstage-status" class="status">Waiting for transcription...</div>
+      <div id="mainstage-transcript" class="transcript">
+        <div class="empty">Transcript will appear here when the host starts transcription.</div>
+      </div>
     </div>
 
     <script>

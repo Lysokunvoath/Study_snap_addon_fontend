@@ -24,6 +24,31 @@
         padding: 12px;
       }
 
+      .field {
+        display: grid;
+        gap: 6px;
+        margin: 0 0 12px;
+      }
+
+      label {
+        font-size: 12px;
+        color: #4b5563;
+      }
+
+      input {
+        border: 1px solid #cfd8e3;
+        border-radius: 8px;
+        padding: 9px 10px;
+        font-size: 13px;
+      }
+
+      .button-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 0 0 10px;
+      }
+
       h1 {
         margin: 0 0 10px;
         font-size: 18px;
@@ -47,6 +72,59 @@
       button:hover {
         background: #0847aa;
       }
+
+      button.secondary {
+        background: #1967d2;
+      }
+
+      button.ghost {
+        background: #eef3fb;
+        color: #12366b;
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      .status {
+        font-size: 12px;
+        border-radius: 999px;
+        padding: 6px 10px;
+        display: inline-block;
+        background: #e9f2ff;
+        color: #0c3d82;
+        margin: 0 0 10px;
+      }
+
+      .transcript {
+        margin-top: 10px;
+        border: 1px solid #dce3ec;
+        border-radius: 8px;
+        background: #f9fbff;
+        max-height: 220px;
+        overflow: auto;
+        padding: 10px;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .transcript .empty {
+        color: #6b7280;
+      }
+
+      .line {
+        margin: 0 0 8px;
+      }
+
+      .line.partial {
+        color: #425466;
+        font-style: italic;
+      }
+
+      .line.final {
+        color: #102a4a;
+      }
     </style>
   </head>
   <body>
@@ -54,7 +132,29 @@
       <div class="card">
         <h1>Study Snap</h1>
         <p>Only you can see this side panel.</p>
-        <button id="start-activity">Open Main Stage</button>
+
+        <div class="field">
+          <label for="backend-url">Backend URL</label>
+          <input
+            id="backend-url"
+            type="text"
+            value="http://localhost:8080"
+            placeholder="https://your-backend.example.com"
+          />
+        </div>
+
+        <div id="transcription-status" class="status">Idle</div>
+
+        <div class="button-row">
+          <button id="start-activity" class="secondary">Open Main Stage</button>
+          <button id="start-transcription">Start Transcription</button>
+          <button id="stop-transcription" class="ghost" disabled>Stop</button>
+          <button id="clear-transcript" class="ghost">Clear</button>
+        </div>
+
+        <div id="transcript" class="transcript">
+          <div class="empty">Transcript will appear here.</div>
+        </div>
       </div>
     </div>
 
