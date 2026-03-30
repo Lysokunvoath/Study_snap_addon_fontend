@@ -219,7 +219,9 @@ function emitRecorderControlEvent(event: RecorderControlEvent): void {
 }
 
 function setControlState(isRunning: boolean): void {
-  const startButton = document.getElementById('start-transcription') as HTMLButtonElement | null;
+  const startButton =
+    (document.getElementById('start-transcript') as HTMLButtonElement | null) ??
+    (document.getElementById('start-transcription') as HTMLButtonElement | null);
   const stopButton = document.getElementById('stop-transcription') as HTMLButtonElement | null;
   const backendInput = document.getElementById('backend-url') as HTMLInputElement | null;
 
@@ -762,11 +764,12 @@ export async function setUpSidePanel(): Promise<void> {
     throw new Error('Could not find #start-activity button in SidePanel.html');
   }
 
-  const startTranscriptionButton = document.getElementById('start-transcription');
+  const openRecorderButton = document.getElementById('open-recorder');
+  const startTranscriptButton = document.getElementById('start-transcript');
   const stopTranscriptionButton = document.getElementById('stop-transcription');
   const clearButton = document.getElementById('clear-transcript');
 
-  if (!startTranscriptionButton || !stopTranscriptionButton || !clearButton) {
+  if (!openRecorderButton || !startTranscriptButton || !stopTranscriptionButton || !clearButton) {
     throw new Error('Could not find transcription controls in SidePanel.html');
   }
 
@@ -776,7 +779,12 @@ export async function setUpSidePanel(): Promise<void> {
     });
   });
 
-  startTranscriptionButton.addEventListener('click', () => {
+  openRecorderButton.addEventListener('click', () => {
+    openRecorderWindow(false);
+    setStatus('Recorder window opened. Click Start Transcript to begin.', false);
+  });
+
+  startTranscriptButton.addEventListener('click', () => {
     const baseUrl = getBackendBaseUrl();
     setStoredBackendBaseUrl(baseUrl);
     emitRecorderControlEvent({
@@ -785,7 +793,7 @@ export async function setUpSidePanel(): Promise<void> {
     });
     openRecorderWindow(true);
     emitRecorderControlEvent({ type: 'start', payload: {} });
-    setStatus('Recorder window opened. Start/Stop runs there.');
+    setStatus('Starting transcript. Text will appear below.');
   });
 
   stopTranscriptionButton.addEventListener('click', () => {
@@ -802,7 +810,7 @@ export async function setUpSidePanel(): Promise<void> {
   initializeBackendUrlInput();
   clearTranscript();
   setControlState(false);
-  setStatus('Ready. Click Start Transcription to open recorder window.');
+  setStatus('Ready. Click Start Transcript to begin.');
 }
 
 export async function initializeMainStage(): Promise<void> {
