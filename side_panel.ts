@@ -30,6 +30,7 @@ type TranscriptMessage = {
 
 type TranscriptionState = {
   ws: WebSocket | null;
+  sessionStarted: boolean;
   stream: MediaStream | null;
   audioContext: AudioContext | null;
   sourceNode: MediaStreamAudioSourceNode | null;
@@ -42,6 +43,7 @@ type TranscriptionState = {
 
 const transcriptionState: TranscriptionState = {
   ws: null,
+  sessionStarted: false,
   stream: null,
   audioContext: null,
   sourceNode: null,
@@ -261,7 +263,7 @@ function floatToPcm16(float32Samples: Float32Array): Uint8Array {
 
 function sendAudioChunk(float32Samples: Float32Array): void {
   const socket = transcriptionState.ws;
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
+  if (!socket || socket.readyState !== WebSocket.OPEN || !transcriptionState.sessionStarted) {
     return;
   }
 
@@ -588,6 +590,12 @@ function handleServerMessage(event: MessageEvent): void {
   try {
     const message = JSON.parse(String(event.data)) as TranscriptMessage;
 
+    if (message.type === 'session.started') {
+      transcriptionState.sessionStarted = true;
+      setStatus('Connected. Streaming audio...');
+      return;
+    }
+
     if (message.type === 'transcript.partial' && message.payload?.text) {
       upsertPartialLine(message.payload.text);
       setStatus('Listening...');
@@ -655,6 +663,7 @@ async function stopTranscription(): Promise<void> {
 
   transcriptionState.seq = 0;
   transcriptionState.pendingSamples = [];
+  transcriptionState.sessionStarted = false;
   setControlState(false);
   setStatus('Stopped');
 }
@@ -693,6 +702,7 @@ async function startTranscription(): Promise<void> {
 
     const ws = new WebSocket(wsUrl);
     transcriptionState.ws = ws;
+    transcriptionState.sessionStarted = false;
 
     ws.addEventListener('open', () => {
       ws.send(
@@ -704,7 +714,7 @@ async function startTranscription(): Promise<void> {
           },
         })
       );
-      setStatus('Connected. Streaming audio...');
+      setStatus('Connected. Waiting for session start...');
     });
 
     ws.addEventListener('message', handleServerMessage);
