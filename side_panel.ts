@@ -33,6 +33,7 @@ type TranscriptionState = {
   stream: MediaStream | null;
   audioContext: AudioContext | null;
   sourceNode: MediaStreamAudioSourceNode | null;
+  workletNode: AudioWorkletNode | null;
   processorNode: ScriptProcessorNode | null;
   seq: number;
   partialLine: HTMLDivElement | null;
@@ -43,6 +44,7 @@ const transcriptionState: TranscriptionState = {
   stream: null,
   audioContext: null,
   sourceNode: null,
+  workletNode: null,
   processorNode: null,
   seq: 0,
   partialLine: null,
@@ -50,6 +52,7 @@ const transcriptionState: TranscriptionState = {
 
 let mainStageChannel: BroadcastChannel | null = null;
 let recorderControlChannel: BroadcastChannel | null = null;
+let captureWorkletModuleUrl: string | null = null;
 
 declare global {
   interface Window {
@@ -250,6 +253,50 @@ function floatToPcm16(float32Samples: Float32Array): Uint8Array {
   }
 
   return new Uint8Array(result);
+}
+
+function sendAudioChunk(float32Samples: Float32Array): void {
+  const socket = transcriptionState.ws;
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    return;
+  }
+
+  const pcmBytes = floatToPcm16(float32Samples);
+  const audioBase64 = toBase64(pcmBytes);
+
+  transcriptionState.seq += 1;
+  socket.send(
+    JSON.stringify({
+      type: 'audio.chunk',
+      payload: {
+        seq: transcriptionState.seq,
+        audioBase64,
+      },
+    })
+  );
+}
+
+async function ensureCaptureWorklet(audioContext: AudioContext): Promise<void> {
+  if (!captureWorkletModuleUrl) {
+    const workletSource = `
+class StudySnapCaptureProcessor extends AudioWorkletProcessor {
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (channel && channel.length > 0) {
+      this.port.postMessage(channel.slice());
+    }
+    return true;
+  }
+}
+
+registerProcessor('study-snap-capture-processor', StudySnapCaptureProcessor);
+`;
+
+    const blob = new Blob([workletSource], { type: 'application/javascript' });
+    captureWorkletModuleUrl = URL.createObjectURL(blob);
+  }
+
+  await audioContext.audioWorklet.addModule(captureWorkletModuleUrl);
 }
 
 async function createSessionToken(baseUrl: string): Promise<string> {
@@ -551,9 +598,16 @@ function handleServerMessage(event: MessageEvent): void {
 }
 
 async function stopTranscription(): Promise<void> {
-  const { ws, processorNode, sourceNode, audioContext, stream } = transcriptionState;
+  const { ws, workletNode, processorNode, sourceNode, audioContext, stream } = transcriptionState;
+
+  if (workletNode) {
+    workletNode.disconnect();
+    workletNode.port.onmessage = null;
+    transcriptionState.workletNode = null;
+  }
 
   if (processorNode) {
+    processorNode.onaudioprocess = null;
     processorNode.disconnect();
     transcriptionState.processorNode = null;
   }
@@ -620,9 +674,6 @@ async function startTranscription(): Promise<void> {
     const sourceNode = audioContext.createMediaStreamSource(stream);
     transcriptionState.sourceNode = sourceNode;
 
-    const processorNode = audioContext.createScriptProcessor(4096, 1, 1);
-    transcriptionState.processorNode = processorNode;
-
     const ws = new WebSocket(wsUrl);
     transcriptionState.ws = ws;
 
@@ -651,26 +702,29 @@ async function startTranscription(): Promise<void> {
       setStatus('WebSocket connection error');
     });
 
-    processorNode.onaudioprocess = (event) => {
-      const socket = transcriptionState.ws;
-      if (!socket || socket.readyState !== WebSocket.OPEN) {
-        return;
-      }
-
-      const input = event.inputBuffer.getChannelData(0);
-      const pcmBytes = floatToPcm16(input);
-      const audioBase64 = toBase64(pcmBytes);
-
-      transcriptionState.seq += 1;
-      socket.send(
-        JSON.stringify({
-          type: 'audio.chunk',
-          payload: {
-            seq: transcriptionState.seq,
-            audioBase64,
-          },
-        })
+    if (typeof AudioWorkletNode !== 'undefined' && !!audioContext.audioWorklet) {
+      await ensureCaptureWorklet(audioContext);
+      const workletNode = new AudioWorkletNode(
+        audioContext,
+        'study-snap-capture-processor'
       );
+      transcriptionState.workletNode = workletNode;
+
+      workletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
+        sendAudioChunk(event.data);
+      };
+
+      sourceNode.connect(workletNode);
+      workletNode.connect(audioContext.destination);
+      return;
+    }
+
+    const processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+    transcriptionState.processorNode = processorNode;
+
+    processorNode.onaudioprocess = (event) => {
+      const input = event.inputBuffer.getChannelData(0);
+      sendAudioChunk(input);
     };
 
     sourceNode.connect(processorNode);
