@@ -35,6 +35,7 @@ type TranscriptionState = {
   sourceNode: MediaStreamAudioSourceNode | null;
   workletNode: AudioWorkletNode | null;
   processorNode: ScriptProcessorNode | null;
+  pendingSamples: number[];
   seq: number;
   partialLine: HTMLDivElement | null;
 };
@@ -46,6 +47,7 @@ const transcriptionState: TranscriptionState = {
   sourceNode: null,
   workletNode: null,
   processorNode: null,
+  pendingSamples: [],
   seq: 0,
   partialLine: null,
 };
@@ -274,6 +276,18 @@ function sendAudioChunk(float32Samples: Float32Array): void {
       },
     })
   );
+}
+
+function queueAudioSamples(float32Samples: Float32Array): void {
+  for (let i = 0; i < float32Samples.length; i += 1) {
+    transcriptionState.pendingSamples.push(float32Samples[i]);
+  }
+
+  const chunkSize = 4096;
+  while (transcriptionState.pendingSamples.length >= chunkSize) {
+    const chunk = transcriptionState.pendingSamples.splice(0, chunkSize);
+    sendAudioChunk(Float32Array.from(chunk));
+  }
 }
 
 async function ensureCaptureWorklet(audioContext: AudioContext): Promise<void> {
@@ -638,6 +652,7 @@ async function stopTranscription(): Promise<void> {
   }
 
   transcriptionState.seq = 0;
+  transcriptionState.pendingSamples = [];
   setControlState(false);
   setStatus('Stopped');
 }
@@ -711,7 +726,7 @@ async function startTranscription(): Promise<void> {
       transcriptionState.workletNode = workletNode;
 
       workletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
-        sendAudioChunk(event.data);
+        queueAudioSamples(event.data);
       };
 
       sourceNode.connect(workletNode);
@@ -724,7 +739,7 @@ async function startTranscription(): Promise<void> {
 
     processorNode.onaudioprocess = (event) => {
       const input = event.inputBuffer.getChannelData(0);
-      sendAudioChunk(input);
+      queueAudioSamples(input);
     };
 
     sourceNode.connect(processorNode);
