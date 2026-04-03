@@ -483,7 +483,7 @@ function setupMainStageTranscriptBridge(): void {
     return;
   }
 
-  channel.onmessage = (event: MessageEvent<MainStageEvent>) => {
+  channel.addEventListener('message', (event: MessageEvent<MainStageEvent>) => {
     const message = event.data;
 
     if (message.type === 'status') {
@@ -505,7 +505,7 @@ function setupMainStageTranscriptBridge(): void {
       clearMainStageTranscript();
       setMainStageStatus('Waiting for transcription...');
     }
-  };
+  });
 
   clearMainStageTranscript();
   setMainStageStatus('Waiting for transcription...');
@@ -517,7 +517,7 @@ function setupSidePanelTranscriptBridge(): void {
     return;
   }
 
-  channel.onmessage = (event: MessageEvent<MainStageEvent>) => {
+  channel.addEventListener('message', (event: MessageEvent<MainStageEvent>) => {
     const message = event.data;
 
     if (message.type === 'status') {
@@ -539,7 +539,7 @@ function setupSidePanelTranscriptBridge(): void {
       clearTranscript(false);
       setStatus('Idle', false);
     }
-  };
+  });
 }
 
 function setupRecorderControlBridge(): void {
