@@ -28,6 +28,27 @@ type TranscriptMessage = {
   };
 };
 
+type TranscriptImportResponse = {
+  importedLineCount: number;
+  lines: string[];
+};
+
+type OAuthStartResponse = {
+  authUrl: string;
+};
+
+type OAuthStatusResponse = {
+  connected: boolean;
+};
+
+type TranscriptSyncResponse = {
+  documentId: string;
+  documentTitle: string;
+  modifiedTime: string | null;
+  importedLineCount: number;
+  lines: string[];
+};
+
 type TranscriptionState = {
   ws: WebSocket | null;
   sessionStarted: boolean;
@@ -57,6 +78,7 @@ const transcriptionState: TranscriptionState = {
 let mainStageChannel: BroadcastChannel | null = null;
 let recorderControlChannel: BroadcastChannel | null = null;
 let captureWorkletModuleUrl: string | null = null;
+const USER_KEY_STORAGE_KEY = 'studySnap.userKey';
 
 declare global {
   interface Window {
@@ -150,6 +172,21 @@ function getBackendBaseUrl(): string {
 
   setStoredBackendBaseUrl(resolved);
   return resolved;
+}
+
+function getOrCreateUserKey(): string {
+  try {
+    const existing = window.localStorage.getItem(USER_KEY_STORAGE_KEY);
+    if (existing) {
+      return existing;
+    }
+
+    const created = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    window.localStorage.setItem(USER_KEY_STORAGE_KEY, created);
+    return created;
+  } catch {
+    return `volatile-${Date.now().toString(36)}`;
+  }
 }
 
 function toWsUrl(baseUrl: string): string {
@@ -336,6 +373,106 @@ async function createSessionToken(baseUrl: string): Promise<string> {
   }
 
   return body.token;
+}
+
+async function importMeetTranscriptText(baseUrl: string, transcriptText: string): Promise<TranscriptImportResponse> {
+  const response = await fetch(`${baseUrl}/api/transcript/import`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ transcriptText }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Transcript import failed (${response.status}): ${message}`);
+  }
+
+  return (await response.json()) as TranscriptImportResponse;
+}
+
+async function startGoogleOAuth(baseUrl: string, userKey: string): Promise<string> {
+  const response = await fetch(`${baseUrl}/api/google/oauth/start`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ userKey }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`OAuth start failed (${response.status}): ${message}`);
+  }
+
+  const body = (await response.json()) as OAuthStartResponse;
+  if (!body.authUrl) {
+    throw new Error('OAuth start response did not include authUrl');
+  }
+
+  return body.authUrl;
+}
+
+async function getGoogleOAuthStatus(baseUrl: string, userKey: string): Promise<boolean> {
+  const response = await fetch(
+    `${baseUrl}/api/google/oauth/status?userKey=${encodeURIComponent(userKey)}`
+  );
+
+  if (!response.ok) {
+    return false;
+  }
+
+  const body = (await response.json()) as OAuthStatusResponse;
+  return !!body.connected;
+}
+
+async function syncMeetTranscriptFromGoogle(
+  baseUrl: string,
+  userKey: string,
+  meetingCode: string
+): Promise<TranscriptSyncResponse> {
+  const response = await fetch(`${baseUrl}/api/google/transcript/sync`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ userKey, meetingCode }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Auto-sync failed (${response.status}): ${message}`);
+  }
+
+  return (await response.json()) as TranscriptSyncResponse;
+}
+
+async function connectGoogleAccount(baseUrl: string, userKey: string): Promise<void> {
+  const authUrl = await startGoogleOAuth(baseUrl, userKey);
+  const popup = window.open(authUrl, '_blank', 'popup,width=560,height=720');
+
+  if (!popup) {
+    throw new Error('Popup blocked. Allow popups and try again.');
+  }
+
+  const timeoutAt = Date.now() + 120_000;
+  while (Date.now() < timeoutAt) {
+    const connected = await getGoogleOAuthStatus(baseUrl, userKey);
+    if (connected) {
+      return;
+    }
+
+    if (popup.closed) {
+      break;
+    }
+
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 1500);
+    });
+  }
+
+  throw new Error('Google account connect timed out or was cancelled.');
 }
 
 function appendFinalLine(text: string, shouldBroadcast = true): void {
@@ -777,9 +914,20 @@ export async function setUpSidePanel(): Promise<void> {
   const openRecorderButton = document.getElementById('open-recorder');
   const startTranscriptButton = document.getElementById('start-transcript');
   const stopTranscriptionButton = document.getElementById('stop-transcription');
+  const connectGoogleButton = document.getElementById('connect-google');
+  const syncMeetTranscriptButton = document.getElementById('sync-meet-transcript');
+  const importTranscriptButton = document.getElementById('import-meet-transcript');
   const clearButton = document.getElementById('clear-transcript');
 
-  if (!openRecorderButton || !startTranscriptButton || !stopTranscriptionButton || !clearButton) {
+  if (
+    !openRecorderButton ||
+    !startTranscriptButton ||
+    !stopTranscriptionButton ||
+    !connectGoogleButton ||
+    !syncMeetTranscriptButton ||
+    !importTranscriptButton ||
+    !clearButton
+  ) {
     throw new Error('Could not find transcription controls in SidePanel.html');
   }
 
@@ -809,6 +957,70 @@ export async function setUpSidePanel(): Promise<void> {
   stopTranscriptionButton.addEventListener('click', () => {
     emitRecorderControlEvent({ type: 'stop', payload: {} });
     setStatus('Sent stop command to recorder window.');
+  });
+
+  connectGoogleButton.addEventListener('click', async () => {
+    try {
+      setStatus('Opening Google account connect...');
+      const baseUrl = getBackendBaseUrl();
+      const userKey = getOrCreateUserKey();
+      await connectGoogleAccount(baseUrl, userKey);
+      setStatus('Google account connected. You can now sync Meet transcript.');
+    } catch (error) {
+      setStatus(`Google connect failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+
+  syncMeetTranscriptButton.addEventListener('click', async () => {
+    const meetingCodeInput = window.prompt(
+      'Optional: enter Meet code to narrow search (example: abc-defg-hij). Leave empty to use latest transcript doc.',
+      ''
+    );
+
+    try {
+      setStatus('Syncing transcript from Google Docs...');
+      const baseUrl = getBackendBaseUrl();
+      const userKey = getOrCreateUserKey();
+      const synced = await syncMeetTranscriptFromGoogle(
+        baseUrl,
+        userKey,
+        (meetingCodeInput ?? '').trim()
+      );
+
+      clearTranscript();
+      for (const line of synced.lines) {
+        appendFinalLine(line);
+      }
+
+      setStatus(`Synced ${synced.importedLineCount} lines from ${synced.documentTitle}.`);
+    } catch (error) {
+      setStatus(`Auto-sync failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+
+  importTranscriptButton.addEventListener('click', async () => {
+    const pastedTranscript = window.prompt(
+      'Paste Google Meet built-in transcript text here to import into Study Snap:'
+    );
+
+    if (!pastedTranscript) {
+      return;
+    }
+
+    try {
+      setStatus('Importing Meet transcript...');
+      const baseUrl = getBackendBaseUrl();
+      const imported = await importMeetTranscriptText(baseUrl, pastedTranscript);
+
+      clearTranscript();
+      for (const line of imported.lines) {
+        appendFinalLine(line);
+      }
+
+      setStatus(`Imported ${imported.importedLineCount} transcript lines.`);
+    } catch (error) {
+      setStatus(`Import failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   });
 
   clearButton.addEventListener('click', () => {
