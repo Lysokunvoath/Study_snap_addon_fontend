@@ -911,18 +911,12 @@ export async function setUpSidePanel(): Promise<void> {
     throw new Error('Could not find #start-activity button in SidePanel.html');
   }
 
-  const openRecorderButton = document.getElementById('open-recorder');
-  const startTranscriptButton = document.getElementById('start-transcript');
-  const stopTranscriptionButton = document.getElementById('stop-transcription');
   const connectGoogleButton = document.getElementById('connect-google');
   const syncMeetTranscriptButton = document.getElementById('sync-meet-transcript');
   const importTranscriptButton = document.getElementById('import-meet-transcript');
   const clearButton = document.getElementById('clear-transcript');
 
   if (
-    !openRecorderButton ||
-    !startTranscriptButton ||
-    !stopTranscriptionButton ||
     !connectGoogleButton ||
     !syncMeetTranscriptButton ||
     !importTranscriptButton ||
@@ -935,28 +929,6 @@ export async function setUpSidePanel(): Promise<void> {
     await sidePanelClient.startActivity({
       mainStageUrl: getDefaultMainStageUrl(),
     });
-  });
-
-  openRecorderButton.addEventListener('click', () => {
-    openRecorderWindow(false);
-    setStatus('Recorder window opened. Click Start Transcript to begin.', false);
-  });
-
-  startTranscriptButton.addEventListener('click', () => {
-    const baseUrl = getBackendBaseUrl();
-    setStoredBackendBaseUrl(baseUrl);
-    emitRecorderControlEvent({
-      type: 'syncBackendUrl',
-      payload: { baseUrl },
-    });
-    openRecorderWindow(true);
-    emitRecorderControlEvent({ type: 'start', payload: {} });
-    setStatus('Starting transcript. Text will appear below.');
-  });
-
-  stopTranscriptionButton.addEventListener('click', () => {
-    emitRecorderControlEvent({ type: 'stop', payload: {} });
-    setStatus('Sent stop command to recorder window.');
   });
 
   connectGoogleButton.addEventListener('click', async () => {
@@ -1025,14 +997,13 @@ export async function setUpSidePanel(): Promise<void> {
 
   clearButton.addEventListener('click', () => {
     clearTranscript();
-    emitRecorderControlEvent({ type: 'clear', payload: {} });
   });
 
   setupSidePanelTranscriptBridge();
   initializeBackendUrlInput();
   clearTranscript();
   setControlState(false);
-  setStatus('Ready. Click Start Transcript to begin.');
+  setStatus('Ready. Connect Google and sync Meet transcript.');
 }
 
 export async function initializeMainStage(): Promise<void> {
