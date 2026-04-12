@@ -49,6 +49,13 @@ type TranscriptSyncResponse = {
   lines: string[];
 };
 
+type LiveSyncState = {
+  timerId: number | null;
+  meetingCode: string | null;
+  activeDocumentId: string | null;
+  seenLines: Set<string>;
+};
+
 type TranscriptionState = {
   ws: WebSocket | null;
   sessionStarted: boolean;
@@ -73,6 +80,13 @@ const transcriptionState: TranscriptionState = {
   pendingSamples: [],
   seq: 0,
   partialLine: null,
+};
+
+const liveSyncState: LiveSyncState = {
+  timerId: null,
+  meetingCode: null,
+  activeDocumentId: null,
+  seenLines: new Set<string>(),
 };
 
 let mainStageChannel: BroadcastChannel | null = null;
@@ -446,6 +460,91 @@ async function syncMeetTranscriptFromGoogle(
   }
 
   return (await response.json()) as TranscriptSyncResponse;
+}
+
+function signatureForLine(text: string): string {
+  return text.trim().toLowerCase();
+}
+
+function resetLiveSyncBuffer(): void {
+  liveSyncState.activeDocumentId = null;
+  liveSyncState.seenLines.clear();
+}
+
+function applySyncedTranscriptLines(synced: TranscriptSyncResponse): number {
+  if (liveSyncState.activeDocumentId !== synced.documentId) {
+    liveSyncState.activeDocumentId = synced.documentId;
+    liveSyncState.seenLines.clear();
+    clearTranscript();
+  }
+
+  let appended = 0;
+  for (const line of synced.lines) {
+    const signature = signatureForLine(line);
+    if (!signature || liveSyncState.seenLines.has(signature)) {
+      continue;
+    }
+
+    liveSyncState.seenLines.add(signature);
+    appendFinalLine(line);
+    appended += 1;
+  }
+
+  return appended;
+}
+
+function setLiveSyncButtons(isRunning: boolean): void {
+  const startLiveSyncButton = document.getElementById('start-live-sync') as HTMLButtonElement | null;
+  const stopLiveSyncButton = document.getElementById('stop-live-sync') as HTMLButtonElement | null;
+
+  if (startLiveSyncButton) {
+    startLiveSyncButton.disabled = isRunning;
+  }
+
+  if (stopLiveSyncButton) {
+    stopLiveSyncButton.disabled = !isRunning;
+  }
+}
+
+function stopLiveSyncLoop(statusMessage = 'Live sync stopped.'): void {
+  if (liveSyncState.timerId) {
+    window.clearInterval(liveSyncState.timerId);
+    liveSyncState.timerId = null;
+  }
+
+  liveSyncState.meetingCode = null;
+  setLiveSyncButtons(false);
+  setStatus(statusMessage);
+}
+
+async function runLiveSyncTick(baseUrl: string, userKey: string, meetingCode: string): Promise<void> {
+  const synced = await syncMeetTranscriptFromGoogle(baseUrl, userKey, meetingCode);
+  const appended = applySyncedTranscriptLines(synced);
+
+  setStatus(
+    `Live sync: +${appended} new line(s), ${synced.importedLineCount} total from ${synced.documentTitle}.`
+  );
+}
+
+async function startLiveSyncLoop(baseUrl: string, userKey: string, meetingCode: string): Promise<void> {
+  if (liveSyncState.timerId) {
+    return;
+  }
+
+  liveSyncState.meetingCode = meetingCode;
+  resetLiveSyncBuffer();
+  setLiveSyncButtons(true);
+  setStatus('Starting live transcript sync...');
+
+  await runLiveSyncTick(baseUrl, userKey, meetingCode);
+
+  liveSyncState.timerId = window.setInterval(() => {
+    runLiveSyncTick(baseUrl, userKey, meetingCode).catch((error) => {
+      stopLiveSyncLoop(
+        `Live sync stopped: ${error instanceof Error ? error.message : String(error)}`
+      );
+    });
+  }, 5000);
 }
 
 async function connectGoogleAccount(baseUrl: string, userKey: string): Promise<void> {
@@ -913,12 +1012,16 @@ export async function setUpSidePanel(): Promise<void> {
 
   const connectGoogleButton = document.getElementById('connect-google');
   const syncMeetTranscriptButton = document.getElementById('sync-meet-transcript');
+  const startLiveSyncButton = document.getElementById('start-live-sync');
+  const stopLiveSyncButton = document.getElementById('stop-live-sync');
   const importTranscriptButton = document.getElementById('import-meet-transcript');
   const clearButton = document.getElementById('clear-transcript');
 
   if (
     !connectGoogleButton ||
     !syncMeetTranscriptButton ||
+    !startLiveSyncButton ||
+    !stopLiveSyncButton ||
     !importTranscriptButton ||
     !clearButton
   ) {
@@ -945,9 +1048,15 @@ export async function setUpSidePanel(): Promise<void> {
 
   syncMeetTranscriptButton.addEventListener('click', async () => {
     const meetingCodeInput = window.prompt(
-      'Optional: enter Meet code to narrow search (example: abc-defg-hij). Leave empty to use latest transcript doc.',
+      'Enter Meet code (required, example: abc-defg-hij):',
       ''
     );
+
+    const meetingCode = (meetingCodeInput ?? '').trim();
+    if (!meetingCode) {
+      setStatus('Sync cancelled: meeting code is required.');
+      return;
+    }
 
     try {
       setStatus('Syncing transcript from Google Docs...');
@@ -956,18 +1065,42 @@ export async function setUpSidePanel(): Promise<void> {
       const synced = await syncMeetTranscriptFromGoogle(
         baseUrl,
         userKey,
-        (meetingCodeInput ?? '').trim()
+        meetingCode
       );
 
-      clearTranscript();
-      for (const line of synced.lines) {
-        appendFinalLine(line);
-      }
-
-      setStatus(`Synced ${synced.importedLineCount} lines from ${synced.documentTitle}.`);
+      resetLiveSyncBuffer();
+      const appended = applySyncedTranscriptLines(synced);
+      setStatus(`Synced ${appended} lines from ${synced.documentTitle}.`);
     } catch (error) {
       setStatus(`Auto-sync failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  });
+
+  startLiveSyncButton.addEventListener('click', async () => {
+    const meetingCodeInput = window.prompt(
+      'Enter Meet code for live sync (required, example: abc-defg-hij):',
+      liveSyncState.meetingCode ?? ''
+    );
+
+    const meetingCode = (meetingCodeInput ?? '').trim();
+    if (!meetingCode) {
+      setStatus('Live sync cancelled: meeting code is required.');
+      return;
+    }
+
+    try {
+      const baseUrl = getBackendBaseUrl();
+      const userKey = getOrCreateUserKey();
+      await startLiveSyncLoop(baseUrl, userKey, meetingCode);
+    } catch (error) {
+      stopLiveSyncLoop(
+        `Live sync failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  });
+
+  stopLiveSyncButton.addEventListener('click', () => {
+    stopLiveSyncLoop();
   });
 
   importTranscriptButton.addEventListener('click', async () => {
@@ -997,12 +1130,21 @@ export async function setUpSidePanel(): Promise<void> {
 
   clearButton.addEventListener('click', () => {
     clearTranscript();
+    resetLiveSyncBuffer();
+  });
+
+  window.addEventListener('beforeunload', () => {
+    if (liveSyncState.timerId) {
+      window.clearInterval(liveSyncState.timerId);
+      liveSyncState.timerId = null;
+    }
   });
 
   setupSidePanelTranscriptBridge();
   initializeBackendUrlInput();
   clearTranscript();
   setControlState(false);
+  setLiveSyncButtons(false);
   setStatus('Ready. Connect Google and sync Meet transcript.');
 }
 
