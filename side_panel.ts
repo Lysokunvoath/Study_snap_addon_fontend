@@ -49,11 +49,49 @@ type TranscriptSyncResponse = {
   lines: string[];
 };
 
+type BotStartResponse = {
+  botId: string;
+  status: string;
+  meetingUrl: string;
+};
+
+type BotStopResponse = {
+  stopped: boolean;
+  botId: string;
+};
+
+type BotStatusResponse = {
+  botId: string;
+  status: string;
+  lineCount: number;
+};
+
+type BotTranscriptLine = {
+  seq: number;
+  text: string;
+  speaker: string | null;
+  timestamp: string;
+};
+
+type BotTranscriptResponse = {
+  botId: string;
+  status: string;
+  latestSeq: number;
+  lines: BotTranscriptLine[];
+};
+
 type LiveSyncState = {
   timerId: number | null;
   meetingCode: string | null;
   activeDocumentId: string | null;
   seenLines: Set<string>;
+};
+
+type BotLiveState = {
+  botId: string | null;
+  meetingUrl: string | null;
+  timerId: number | null;
+  latestSeq: number;
 };
 
 type TranscriptionState = {
@@ -87,6 +125,13 @@ const liveSyncState: LiveSyncState = {
   meetingCode: null,
   activeDocumentId: null,
   seenLines: new Set<string>(),
+};
+
+const botLiveState: BotLiveState = {
+  botId: null,
+  meetingUrl: null,
+  timerId: null,
+  latestSeq: 0,
 };
 
 let mainStageChannel: BroadcastChannel | null = null;
@@ -462,6 +507,72 @@ async function syncMeetTranscriptFromGoogle(
   return (await response.json()) as TranscriptSyncResponse;
 }
 
+async function startMeetingBot(baseUrl: string, meetingUrl: string): Promise<BotStartResponse> {
+  const response = await fetch(`${baseUrl}/api/bot/start`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      meetingUrl,
+    }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Start bot failed (${response.status}): ${message}`);
+  }
+
+  return (await response.json()) as BotStartResponse;
+}
+
+async function stopMeetingBot(baseUrl: string, botId: string): Promise<BotStopResponse> {
+  const response = await fetch(`${baseUrl}/api/bot/stop`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ botId }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Stop bot failed (${response.status}): ${message}`);
+  }
+
+  return (await response.json()) as BotStopResponse;
+}
+
+async function getMeetingBotStatus(baseUrl: string, botId: string): Promise<BotStatusResponse> {
+  const response = await fetch(`${baseUrl}/api/bot/status?botId=${encodeURIComponent(botId)}`);
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Bot status failed (${response.status}): ${message}`);
+  }
+
+  return (await response.json()) as BotStatusResponse;
+}
+
+async function pollMeetingBotTranscript(
+  baseUrl: string,
+  botId: string,
+  sinceSeq: number
+): Promise<BotTranscriptResponse> {
+  const response = await fetch(
+    `${baseUrl}/api/bot/transcript?botId=${encodeURIComponent(botId)}&sinceSeq=${encodeURIComponent(
+      String(sinceSeq)
+    )}`
+  );
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Bot transcript failed (${response.status}): ${message}`);
+  }
+
+  return (await response.json()) as BotTranscriptResponse;
+}
+
 function signatureForLine(text: string): string {
   return text.trim().toLowerCase();
 }
@@ -504,6 +615,64 @@ function setLiveSyncButtons(isRunning: boolean): void {
   if (stopLiveSyncButton) {
     stopLiveSyncButton.disabled = !isRunning;
   }
+}
+
+function setMeetingBotButtons(isRunning: boolean): void {
+  const startBotButton = document.getElementById('start-meeting-bot') as HTMLButtonElement | null;
+  const stopBotButton = document.getElementById('stop-meeting-bot') as HTMLButtonElement | null;
+
+  if (startBotButton) {
+    startBotButton.disabled = isRunning;
+  }
+
+  if (stopBotButton) {
+    stopBotButton.disabled = !isRunning;
+  }
+}
+
+function stopMeetingBotPolling(statusMessage?: string): void {
+  if (botLiveState.timerId) {
+    window.clearInterval(botLiveState.timerId);
+    botLiveState.timerId = null;
+  }
+
+  botLiveState.botId = null;
+  botLiveState.meetingUrl = null;
+  botLiveState.latestSeq = 0;
+  setMeetingBotButtons(false);
+
+  if (statusMessage) {
+    setStatus(statusMessage);
+  }
+}
+
+async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<void> {
+  const transcript = await pollMeetingBotTranscript(baseUrl, botId, botLiveState.latestSeq);
+
+  for (const line of transcript.lines) {
+    const speakerPrefix = line.speaker ? `${line.speaker}: ` : '';
+    appendFinalLine(`${speakerPrefix}${line.text}`);
+  }
+
+  botLiveState.latestSeq = transcript.latestSeq;
+  const status = await getMeetingBotStatus(baseUrl, botId);
+  setStatus(`Meeting bot ${status.status}. ${status.lineCount} line(s) captured.`);
+}
+
+async function beginMeetingBotPolling(baseUrl: string, botId: string): Promise<void> {
+  if (botLiveState.timerId) {
+    window.clearInterval(botLiveState.timerId);
+  }
+
+  await runMeetingBotPollTick(baseUrl, botId);
+
+  botLiveState.timerId = window.setInterval(() => {
+    runMeetingBotPollTick(baseUrl, botId).catch((error) => {
+      stopMeetingBotPolling(
+        `Meeting bot polling stopped: ${error instanceof Error ? error.message : String(error)}`
+      );
+    });
+  }, 3000);
 }
 
 function stopLiveSyncLoop(statusMessage = 'Live sync stopped.'): void {
@@ -1014,6 +1183,8 @@ export async function setUpSidePanel(): Promise<void> {
   const syncMeetTranscriptButton = document.getElementById('sync-meet-transcript');
   const startLiveSyncButton = document.getElementById('start-live-sync');
   const stopLiveSyncButton = document.getElementById('stop-live-sync');
+  const startMeetingBotButton = document.getElementById('start-meeting-bot');
+  const stopMeetingBotButton = document.getElementById('stop-meeting-bot');
   const importTranscriptButton = document.getElementById('import-meet-transcript');
   const clearButton = document.getElementById('clear-transcript');
 
@@ -1022,6 +1193,8 @@ export async function setUpSidePanel(): Promise<void> {
     !syncMeetTranscriptButton ||
     !startLiveSyncButton ||
     !stopLiveSyncButton ||
+    !startMeetingBotButton ||
+    !stopMeetingBotButton ||
     !importTranscriptButton ||
     !clearButton
   ) {
@@ -1032,6 +1205,50 @@ export async function setUpSidePanel(): Promise<void> {
     await sidePanelClient.startActivity({
       mainStageUrl: getDefaultMainStageUrl(),
     });
+  });
+
+  startMeetingBotButton.addEventListener('click', async () => {
+    const meetingUrlInput = window.prompt(
+      'Enter Google Meet URL (example: https://meet.google.com/abc-defg-hij):',
+      botLiveState.meetingUrl ?? ''
+    );
+
+    const meetingUrl = (meetingUrlInput ?? '').trim();
+    if (!meetingUrl) {
+      setStatus('Start bot cancelled: meeting URL is required.');
+      return;
+    }
+
+    try {
+      const baseUrl = getBackendBaseUrl();
+      const started = await startMeetingBot(baseUrl, meetingUrl);
+      botLiveState.botId = started.botId;
+      botLiveState.meetingUrl = meetingUrl;
+      botLiveState.latestSeq = 0;
+      clearTranscript();
+      setMeetingBotButtons(true);
+      setStatus(`Meeting bot started (ID: ${started.botId}). Admit it in Meet waiting room.`);
+      await beginMeetingBotPolling(baseUrl, started.botId);
+    } catch (error) {
+      stopMeetingBotPolling();
+      setStatus(`Start bot failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+
+  stopMeetingBotButton.addEventListener('click', async () => {
+    const botId = botLiveState.botId;
+    if (!botId) {
+      stopMeetingBotPolling('Meeting bot is not running.');
+      return;
+    }
+
+    try {
+      const baseUrl = getBackendBaseUrl();
+      await stopMeetingBot(baseUrl, botId);
+      stopMeetingBotPolling('Meeting bot stopped.');
+    } catch (error) {
+      setStatus(`Stop bot failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   });
 
   connectGoogleButton.addEventListener('click', async () => {
@@ -1138,6 +1355,11 @@ export async function setUpSidePanel(): Promise<void> {
       window.clearInterval(liveSyncState.timerId);
       liveSyncState.timerId = null;
     }
+
+    if (botLiveState.timerId) {
+      window.clearInterval(botLiveState.timerId);
+      botLiveState.timerId = null;
+    }
   });
 
   setupSidePanelTranscriptBridge();
@@ -1145,6 +1367,7 @@ export async function setUpSidePanel(): Promise<void> {
   clearTranscript();
   setControlState(false);
   setLiveSyncButtons(false);
+  setMeetingBotButtons(false);
   setStatus('Ready. Connect Google and sync Meet transcript.');
 }
 
