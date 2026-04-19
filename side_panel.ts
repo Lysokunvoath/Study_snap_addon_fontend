@@ -1179,23 +1179,13 @@ export async function setUpSidePanel(): Promise<void> {
     throw new Error('Could not find #start-activity button in SidePanel.html');
   }
 
-  const connectGoogleButton = document.getElementById('connect-google');
-  const syncMeetTranscriptButton = document.getElementById('sync-meet-transcript');
-  const startLiveSyncButton = document.getElementById('start-live-sync');
-  const stopLiveSyncButton = document.getElementById('stop-live-sync');
   const startMeetingBotButton = document.getElementById('start-meeting-bot');
   const stopMeetingBotButton = document.getElementById('stop-meeting-bot');
-  const importTranscriptButton = document.getElementById('import-meet-transcript');
   const clearButton = document.getElementById('clear-transcript');
 
   if (
-    !connectGoogleButton ||
-    !syncMeetTranscriptButton ||
-    !startLiveSyncButton ||
-    !stopLiveSyncButton ||
     !startMeetingBotButton ||
     !stopMeetingBotButton ||
-    !importTranscriptButton ||
     !clearButton
   ) {
     throw new Error('Could not find transcription controls in SidePanel.html');
@@ -1251,103 +1241,10 @@ export async function setUpSidePanel(): Promise<void> {
     }
   });
 
-  connectGoogleButton.addEventListener('click', async () => {
-    try {
-      setStatus('Opening Google account connect...');
-      const baseUrl = getBackendBaseUrl();
-      const userKey = getOrCreateUserKey();
-      await connectGoogleAccount(baseUrl, userKey);
-      setStatus('Google account connected. You can now sync Meet transcript.');
-    } catch (error) {
-      setStatus(`Google connect failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  });
-
-  syncMeetTranscriptButton.addEventListener('click', async () => {
-    const meetingCodeInput = window.prompt(
-      'Enter Meet code (required, example: abc-defg-hij):',
-      ''
-    );
-
-    const meetingCode = (meetingCodeInput ?? '').trim();
-    if (!meetingCode) {
-      setStatus('Sync cancelled: meeting code is required.');
-      return;
-    }
-
-    try {
-      setStatus('Syncing transcript from Google Docs...');
-      const baseUrl = getBackendBaseUrl();
-      const userKey = getOrCreateUserKey();
-      const synced = await syncMeetTranscriptFromGoogle(
-        baseUrl,
-        userKey,
-        meetingCode
-      );
-
-      resetLiveSyncBuffer();
-      const appended = applySyncedTranscriptLines(synced);
-      setStatus(`Synced ${appended} lines from ${synced.documentTitle}.`);
-    } catch (error) {
-      setStatus(`Auto-sync failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  });
-
-  startLiveSyncButton.addEventListener('click', async () => {
-    const meetingCodeInput = window.prompt(
-      'Enter Meet code for live sync (required, example: abc-defg-hij):',
-      liveSyncState.meetingCode ?? ''
-    );
-
-    const meetingCode = (meetingCodeInput ?? '').trim();
-    if (!meetingCode) {
-      setStatus('Live sync cancelled: meeting code is required.');
-      return;
-    }
-
-    try {
-      const baseUrl = getBackendBaseUrl();
-      const userKey = getOrCreateUserKey();
-      await startLiveSyncLoop(baseUrl, userKey, meetingCode);
-    } catch (error) {
-      stopLiveSyncLoop(
-        `Live sync failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  });
-
-  stopLiveSyncButton.addEventListener('click', () => {
-    stopLiveSyncLoop();
-  });
-
-  importTranscriptButton.addEventListener('click', async () => {
-    const pastedTranscript = window.prompt(
-      'Paste Google Meet built-in transcript text here to import into Study Snap:'
-    );
-
-    if (!pastedTranscript) {
-      return;
-    }
-
-    try {
-      setStatus('Importing Meet transcript...');
-      const baseUrl = getBackendBaseUrl();
-      const imported = await importMeetTranscriptText(baseUrl, pastedTranscript);
-
-      clearTranscript();
-      for (const line of imported.lines) {
-        appendFinalLine(line);
-      }
-
-      setStatus(`Imported ${imported.importedLineCount} transcript lines.`);
-    } catch (error) {
-      setStatus(`Import failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  });
-
   clearButton.addEventListener('click', () => {
     clearTranscript();
     resetLiveSyncBuffer();
+    stopMeetingBotPolling();
   });
 
   window.addEventListener('beforeunload', () => {
@@ -1366,9 +1263,8 @@ export async function setUpSidePanel(): Promise<void> {
   initializeBackendUrlInput();
   clearTranscript();
   setControlState(false);
-  setLiveSyncButtons(false);
   setMeetingBotButtons(false);
-  setStatus('Ready. Connect Google and sync Meet transcript.');
+  setStatus('Ready. Start Meeting Bot and admit it in Meet.');
 }
 
 export async function initializeMainStage(): Promise<void> {
