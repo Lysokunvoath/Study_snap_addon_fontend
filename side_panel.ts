@@ -233,6 +233,38 @@ function getBackendBaseUrl(): string {
   return resolved;
 }
 
+function normalizeMeetingUrl(rawInput: string): string {
+  const trimmed = rawInput.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  if (/^https:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  // Allow entering just the meet code, e.g. abc-defg-hij.
+  if (/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i.test(trimmed)) {
+    return `https://meet.google.com/${trimmed.toLowerCase()}`;
+  }
+
+  return trimmed;
+}
+
+function getMeetingUrlInputValue(): string {
+  const input = document.getElementById('meeting-url') as HTMLInputElement | null;
+  if (!input) {
+    return '';
+  }
+
+  const normalized = normalizeMeetingUrl(input.value);
+  if (normalized) {
+    input.value = normalized;
+  }
+
+  return normalized;
+}
+
 function getOrCreateUserKey(): string {
   try {
     const existing = window.localStorage.getItem(USER_KEY_STORAGE_KEY);
@@ -1198,12 +1230,16 @@ export async function setUpSidePanel(): Promise<void> {
   });
 
   startMeetingBotButton.addEventListener('click', async () => {
-    const meetingUrlInput = window.prompt(
-      'Enter Google Meet URL (example: https://meet.google.com/abc-defg-hij):',
-      botLiveState.meetingUrl ?? ''
-    );
+    let meetingUrl = getMeetingUrlInputValue();
 
-    const meetingUrl = (meetingUrlInput ?? '').trim();
+    if (!meetingUrl) {
+      const meetingUrlInput = window.prompt(
+        'Enter Google Meet URL or code (example: https://meet.google.com/abc-defg-hij or abc-defg-hij):',
+        botLiveState.meetingUrl ?? ''
+      );
+      meetingUrl = normalizeMeetingUrl(meetingUrlInput ?? '');
+    }
+
     if (!meetingUrl) {
       setStatus('Start bot cancelled: meeting URL is required.');
       return;
