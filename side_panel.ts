@@ -4,6 +4,7 @@ const CLOUD_PROJECT_NUMBER: string = '980889141066';
 const MAIN_STAGE_CHANNEL_NAME = 'study-snap-transcript';
 const RECORDER_CONTROL_CHANNEL_NAME = 'study-snap-recorder-control';
 const BACKEND_URL_STORAGE_KEY = 'studySnap.backendUrl';
+const APP_USER_ID_STORAGE_KEY = 'studySnap.appUserId';
 const DEFAULT_BACKEND_BASE_URL =
   'https://studysnapaddonbackend-production.up.railway.app';
 
@@ -78,6 +79,25 @@ type BotTranscriptResponse = {
   status: string;
   latestSeq: number;
   lines: BotTranscriptLine[];
+};
+
+type StudyGenerateResponse = {
+  title: string;
+  summary: {
+    tldr: string[];
+    keyPoints: string[];
+    actionItems: string[];
+  };
+  notes: Array<{
+    heading: string;
+    bullets: string[];
+  }>;
+  flashcards: Array<{
+    question: string;
+    answer: string;
+    difficulty: 'easy' | 'medium' | 'hard';
+    tags: string[];
+  }>;
 };
 
 type LiveSyncState = {
@@ -231,6 +251,52 @@ function getBackendBaseUrl(): string {
 
   setStoredBackendBaseUrl(resolved);
   return resolved;
+}
+
+function initializeAppUserIdInput(): void {
+  const input = document.getElementById('app-user-id') as HTMLInputElement | null;
+  if (!input) {
+    return;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(APP_USER_ID_STORAGE_KEY);
+    if (stored) {
+      input.value = stored;
+    }
+  } catch {
+    // Ignore storage errors.
+  }
+
+  input.addEventListener('change', () => {
+    const normalized = input.value.trim();
+    input.value = normalized;
+
+    try {
+      if (normalized) {
+        window.localStorage.setItem(APP_USER_ID_STORAGE_KEY, normalized);
+      } else {
+        window.localStorage.removeItem(APP_USER_ID_STORAGE_KEY);
+      }
+    } catch {
+      // Ignore storage errors.
+    }
+  });
+}
+
+function getAppUserId(): string | undefined {
+  const input = document.getElementById('app-user-id') as HTMLInputElement | null;
+  const inputValue = input?.value?.trim() ?? '';
+  if (inputValue) {
+    return inputValue;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(APP_USER_ID_STORAGE_KEY)?.trim();
+    return stored || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeMeetingUrl(rawInput: string): string {
@@ -539,7 +605,11 @@ async function syncMeetTranscriptFromGoogle(
   return (await response.json()) as TranscriptSyncResponse;
 }
 
-async function startMeetingBot(baseUrl: string, meetingUrl: string): Promise<BotStartResponse> {
+async function startMeetingBot(
+  baseUrl: string,
+  meetingUrl: string,
+  userId?: string
+): Promise<BotStartResponse> {
   const response = await fetch(`${baseUrl}/api/bot/start`, {
     method: 'POST',
     headers: {
@@ -547,6 +617,7 @@ async function startMeetingBot(baseUrl: string, meetingUrl: string): Promise<Bot
     },
     body: JSON.stringify({
       meetingUrl,
+      ...(userId ? { userId } : {}),
     }),
   });
 
@@ -603,6 +674,34 @@ async function pollMeetingBotTranscript(
   }
 
   return (await response.json()) as BotTranscriptResponse;
+}
+
+async function generateStudyPack(input: {
+  baseUrl: string;
+  transcriptText: string;
+  title: string;
+  botId?: string;
+  userId?: string;
+}): Promise<StudyGenerateResponse> {
+  const response = await fetch(`${input.baseUrl}/api/study/generate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      transcriptText: input.transcriptText,
+      title: input.title,
+      ...(input.botId ? { botId: input.botId } : {}),
+      ...(input.userId ? { userId: input.userId } : {}),
+    }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Study generation failed (${response.status}): ${message}`);
+  }
+
+  return (await response.json()) as StudyGenerateResponse;
 }
 
 function signatureForLine(text: string): string {
@@ -848,6 +947,74 @@ function clearTranscript(shouldBroadcast = true): void {
       type: 'clear',
       payload: {},
     });
+  }
+}
+
+function getTranscriptTextForStudy(): string {
+  const transcript = document.getElementById('transcript');
+  if (!transcript) {
+    return '';
+  }
+
+  const lines = Array.from(transcript.querySelectorAll('.line.final'))
+    .map((node) => (node.textContent ?? '').trim())
+    .filter(Boolean);
+
+  return lines.join('\n');
+}
+
+function clearStudyResult(): void {
+  const container = document.getElementById('study-result');
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = '<div class="empty">Study summary and flashcard status will appear here.</div>';
+}
+
+function renderStudyResult(result: StudyGenerateResponse): void {
+  const container = document.getElementById('study-result');
+  if (!container) {
+    return;
+  }
+
+  const tldr = result.summary.tldr.slice(0, 3);
+  const keyPoints = result.summary.keyPoints.slice(0, 5);
+
+  const tldrHtml = tldr.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
+  const keyPointsHtml = keyPoints.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
+
+  container.innerHTML = [
+    `<div class="line final"><strong>${escapeHtml(result.title || 'Study Pack')}</strong></div>`,
+    `<div class="line final"><strong>Flashcards:</strong> ${result.flashcards.length}</div>`,
+    '<div class="line final"><strong>TL;DR</strong><ul>' + (tldrHtml || '<li>No summary generated.</li>') + '</ul></div>',
+    '<div class="line final"><strong>Key Points</strong><ul>' + (keyPointsHtml || '<li>No key points generated.</li>') + '</ul></div>',
+  ].join('');
+
+  container.scrollTop = 0;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function getMeetingTitleForStudy(): string {
+  const url = botLiveState.meetingUrl ?? getMeetingUrlInputValue();
+  if (!url) {
+    return 'Meeting Transcript';
+  }
+
+  try {
+    const parsed = new URL(url);
+    const code = parsed.pathname.split('/').filter(Boolean).pop();
+    return code ? `Meeting ${code}` : 'Meeting Transcript';
+  } catch {
+    return 'Meeting Transcript';
   }
 }
 
@@ -1211,13 +1378,15 @@ export async function setUpSidePanel(): Promise<void> {
     throw new Error('Could not find #start-activity button in SidePanel.html');
   }
 
-  const startMeetingBotButton = document.getElementById('start-meeting-bot');
-  const stopMeetingBotButton = document.getElementById('stop-meeting-bot');
-  const clearButton = document.getElementById('clear-transcript');
+  const startMeetingBotButton = document.getElementById('start-meeting-bot') as HTMLButtonElement | null;
+  const stopMeetingBotButton = document.getElementById('stop-meeting-bot') as HTMLButtonElement | null;
+  const generateStudyButton = document.getElementById('generate-study') as HTMLButtonElement | null;
+  const clearButton = document.getElementById('clear-transcript') as HTMLButtonElement | null;
 
   if (
     !startMeetingBotButton ||
     !stopMeetingBotButton ||
+    !generateStudyButton ||
     !clearButton
   ) {
     throw new Error('Could not find transcription controls in SidePanel.html');
@@ -1247,7 +1416,7 @@ export async function setUpSidePanel(): Promise<void> {
 
     try {
       const baseUrl = getBackendBaseUrl();
-      const started = await startMeetingBot(baseUrl, meetingUrl);
+      const started = await startMeetingBot(baseUrl, meetingUrl, getAppUserId());
       botLiveState.botId = started.botId;
       botLiveState.meetingUrl = meetingUrl;
       botLiveState.latestSeq = 0;
@@ -1277,8 +1446,40 @@ export async function setUpSidePanel(): Promise<void> {
     }
   });
 
+  generateStudyButton.addEventListener('click', async () => {
+    const transcriptText = getTranscriptTextForStudy();
+    if (!transcriptText.trim()) {
+      setStatus('Generate study cancelled: no transcript lines captured yet.');
+      return;
+    }
+
+    try {
+      generateStudyButton.disabled = true;
+      setStatus('Generating study pack...');
+
+      const baseUrl = getBackendBaseUrl();
+      const result = await generateStudyPack({
+        baseUrl,
+        transcriptText,
+        title: getMeetingTitleForStudy(),
+        botId: botLiveState.botId ?? undefined,
+        userId: getAppUserId(),
+      });
+
+      renderStudyResult(result);
+      setStatus(
+        `Study pack ready: ${result.flashcards.length} flashcards generated and saved.`
+      );
+    } catch (error) {
+      setStatus(`Generate study failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      generateStudyButton.disabled = false;
+    }
+  });
+
   clearButton.addEventListener('click', () => {
     clearTranscript();
+    clearStudyResult();
     resetLiveSyncBuffer();
     stopMeetingBotPolling();
   });
@@ -1297,7 +1498,9 @@ export async function setUpSidePanel(): Promise<void> {
 
   setupSidePanelTranscriptBridge();
   initializeBackendUrlInput();
+  initializeAppUserIdInput();
   clearTranscript();
+  clearStudyResult();
   setControlState(false);
   setMeetingBotButtons(false);
   setStatus('Ready. Start Meeting Bot and admit it in Meet.');
