@@ -32,6 +32,8 @@ type TranscriptMessage = {
 type TranscriptImportResponse = {
   importedLineCount: number;
   lines: string[];
+  meetingId?: string | null;
+  title?: string;
 };
 
 type OAuthStartResponse = {
@@ -532,13 +534,26 @@ async function createSessionToken(baseUrl: string): Promise<string> {
   return body.token;
 }
 
-async function importMeetTranscriptText(baseUrl: string, transcriptText: string): Promise<TranscriptImportResponse> {
-  const response = await fetch(`${baseUrl}/api/transcript/import`, {
+async function importMeetTranscriptText(input: {
+  baseUrl: string;
+  transcriptText: string;
+  title?: string;
+  botId?: string;
+  userId?: string;
+  meetingUrl?: string;
+}): Promise<TranscriptImportResponse> {
+  const response = await fetch(`${input.baseUrl}/api/transcript/import`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ transcriptText }),
+    body: JSON.stringify({
+      transcriptText: input.transcriptText,
+      ...(input.title ? { title: input.title } : {}),
+      ...(input.botId ? { botId: input.botId } : {}),
+      ...(input.userId ? { userId: input.userId } : {}),
+      ...(input.meetingUrl ? { meetingUrl: input.meetingUrl } : {}),
+    }),
   });
 
   if (!response.ok) {
@@ -783,6 +798,18 @@ async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<vo
   for (const line of transcript.lines) {
     const speakerPrefix = line.speaker ? `${line.speaker}: ` : '';
     appendFinalLine(`${speakerPrefix}${line.text}`);
+  }
+
+  const transcriptText = getTranscriptTextForStudy();
+  if (transcriptText.trim()) {
+    await importMeetTranscriptText({
+      baseUrl,
+      transcriptText,
+      title: getMeetingTitleForStudy(),
+      botId,
+      userId: getAppUserId(),
+      meetingUrl: botLiveState.meetingUrl ?? undefined,
+    });
   }
 
   botLiveState.latestSeq = transcript.latestSeq;
@@ -1458,6 +1485,14 @@ export async function setUpSidePanel(): Promise<void> {
       setStatus('Generating study pack...');
 
       const baseUrl = getBackendBaseUrl();
+      await importMeetTranscriptText({
+        baseUrl,
+        transcriptText,
+        title: getMeetingTitleForStudy(),
+        botId: botLiveState.botId ?? undefined,
+        userId: getAppUserId(),
+        meetingUrl: botLiveState.meetingUrl ?? undefined,
+      });
       const result = await generateStudyPack({
         baseUrl,
         transcriptText,
