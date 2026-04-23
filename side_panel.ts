@@ -44,6 +44,23 @@ type OAuthStatusResponse = {
   connected: boolean;
 };
 
+type WebsiteAuthUser = {
+  id: string;
+  email: string;
+  username: string;
+  firstName?: string;
+  lastName?: string;
+  avatar?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type WebsiteAuthResponse = {
+  user: WebsiteAuthUser;
+  token: string;
+  refreshToken: string;
+};
+
 type TranscriptSyncResponse = {
   documentId: string;
   documentTitle: string;
@@ -160,6 +177,8 @@ let mainStageChannel: BroadcastChannel | null = null;
 let recorderControlChannel: BroadcastChannel | null = null;
 let captureWorkletModuleUrl: string | null = null;
 const USER_KEY_STORAGE_KEY = 'studySnap.userKey';
+const WEBSITE_AUTH_TOKEN_STORAGE_KEY = 'studySnap.websiteAuthToken';
+const WEBSITE_AUTH_USER_STORAGE_KEY = 'studySnap.websiteAuthUser';
 
 declare global {
   interface Window {
@@ -256,48 +275,206 @@ function getBackendBaseUrl(): string {
 }
 
 function initializeAppUserIdInput(): void {
-  const input = document.getElementById('app-user-id') as HTMLInputElement | null;
-  if (!input) {
-    return;
-  }
-
-  try {
-    const stored = window.localStorage.getItem(APP_USER_ID_STORAGE_KEY);
-    if (stored) {
-      input.value = stored;
-    }
-  } catch {
-    // Ignore storage errors.
-  }
-
-  input.addEventListener('change', () => {
-    const normalized = input.value.trim();
-    input.value = normalized;
-
-    try {
-      if (normalized) {
-        window.localStorage.setItem(APP_USER_ID_STORAGE_KEY, normalized);
-      } else {
-        window.localStorage.removeItem(APP_USER_ID_STORAGE_KEY);
-      }
-    } catch {
-      // Ignore storage errors.
-    }
-  });
+  // No-op: website auth now drives the addon identity.
 }
 
 function getAppUserId(): string | undefined {
-  const input = document.getElementById('app-user-id') as HTMLInputElement | null;
-  const inputValue = input?.value?.trim() ?? '';
-  if (inputValue) {
-    return inputValue;
+  try {
+    const storedUser = window.localStorage.getItem(WEBSITE_AUTH_USER_STORAGE_KEY);
+    if (storedUser) {
+      const parsed = JSON.parse(storedUser) as Partial<WebsiteAuthUser> | null;
+      const userId = String(parsed?.id ?? '').trim();
+      if (userId) {
+        return userId;
+      }
+    }
+  } catch {
+    // Ignore storage parse errors.
   }
 
+  return undefined;
+}
+
+function getStoredWebsiteAuthToken(): string | null {
   try {
-    const stored = window.localStorage.getItem(APP_USER_ID_STORAGE_KEY)?.trim();
-    return stored || undefined;
+    const token = window.localStorage.getItem(WEBSITE_AUTH_TOKEN_STORAGE_KEY)?.trim();
+    return token || null;
   } catch {
-    return undefined;
+    return null;
+  }
+}
+
+function getStoredWebsiteAuthUser(): WebsiteAuthUser | null {
+  try {
+    const raw = window.localStorage.getItem(WEBSITE_AUTH_USER_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as WebsiteAuthUser;
+    return parsed?.id ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function setStoredWebsiteAuth(auth: WebsiteAuthResponse): void {
+  try {
+    window.localStorage.setItem(WEBSITE_AUTH_TOKEN_STORAGE_KEY, auth.token);
+    window.localStorage.setItem(WEBSITE_AUTH_USER_STORAGE_KEY, JSON.stringify(auth.user));
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+function clearStoredWebsiteAuth(): void {
+  try {
+    window.localStorage.removeItem(WEBSITE_AUTH_TOKEN_STORAGE_KEY);
+    window.localStorage.removeItem(WEBSITE_AUTH_USER_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+function formatWebsiteUser(user: WebsiteAuthUser | null): string {
+  if (!user) {
+    return 'Not signed in to website account.';
+  }
+
+  const displayName = user.username || user.email || user.id;
+  return `Signed in as ${displayName}`;
+}
+
+function setAuthStatus(text: string): void {
+  const status = document.getElementById('auth-status');
+  if (status) {
+    status.textContent = text;
+  }
+}
+
+function setAuthUserDisplay(user: WebsiteAuthUser | null): void {
+  const display = document.getElementById('auth-user-display');
+  if (display) {
+    display.textContent = formatWebsiteUser(user);
+  }
+}
+
+function setAuthFormEnabled(enabled: boolean): void {
+  const emailInput = document.getElementById('auth-email') as HTMLInputElement | null;
+  const passwordInput = document.getElementById('auth-password') as HTMLInputElement | null;
+  const loginButton = document.getElementById('auth-login') as HTMLButtonElement | null;
+  const logoutButton = document.getElementById('auth-logout') as HTMLButtonElement | null;
+
+  if (emailInput) {
+    emailInput.disabled = !enabled;
+  }
+
+  if (passwordInput) {
+    passwordInput.disabled = !enabled;
+  }
+
+  if (loginButton) {
+    loginButton.disabled = !enabled;
+  }
+
+  if (logoutButton) {
+    logoutButton.disabled = enabled;
+  }
+}
+
+function updateAuthUi(user: WebsiteAuthUser | null): void {
+  setAuthUserDisplay(user);
+  setAuthStatus(user ? `Website account linked: ${user.email}` : 'Sign in with your website account.');
+  setAuthFormEnabled(!user);
+}
+
+async function fetchWebsiteAuthUser(baseUrl: string, token: string): Promise<WebsiteAuthUser> {
+  const response = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Auth session lookup failed (${response.status}): ${message}`);
+  }
+
+  return (await response.json()) as WebsiteAuthUser;
+}
+
+async function loginWebsiteAuth(baseUrl: string, email: string, password: string): Promise<void> {
+  const response = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Website login failed (${response.status}): ${message}`);
+  }
+
+  const auth = (await response.json()) as WebsiteAuthResponse;
+  setStoredWebsiteAuth(auth);
+  updateAuthUi(auth.user);
+}
+
+async function initializeWebsiteAuth(baseUrl: string): Promise<void> {
+  const loginButton = document.getElementById('auth-login') as HTMLButtonElement | null;
+  const logoutButton = document.getElementById('auth-logout') as HTMLButtonElement | null;
+
+  const token = getStoredWebsiteAuthToken();
+  if (token) {
+    try {
+      const user = await fetchWebsiteAuthUser(baseUrl, token);
+      setStoredWebsiteAuth({ token, refreshToken: token, user });
+      updateAuthUi(user);
+    } catch {
+      clearStoredWebsiteAuth();
+      updateAuthUi(null);
+    }
+  } else {
+    updateAuthUi(getStoredWebsiteAuthUser());
+  }
+
+  if (loginButton) {
+    loginButton.addEventListener('click', async () => {
+      const emailInput = document.getElementById('auth-email') as HTMLInputElement | null;
+      const passwordInput = document.getElementById('auth-password') as HTMLInputElement | null;
+      const email = emailInput?.value.trim() ?? '';
+      const password = passwordInput?.value ?? '';
+
+      if (!email || !password) {
+        setAuthStatus('Enter your website email and password first.');
+        return;
+      }
+
+      try {
+        loginButton.disabled = true;
+        setAuthStatus('Signing in to website account...');
+        await loginWebsiteAuth(baseUrl, email, password);
+        if (passwordInput) {
+          passwordInput.value = '';
+        }
+      } catch (error) {
+        clearStoredWebsiteAuth();
+        updateAuthUi(null);
+        setAuthStatus(`Website login failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        loginButton.disabled = false;
+      }
+    });
+  }
+
+  if (logoutButton) {
+    logoutButton.addEventListener('click', () => {
+      clearStoredWebsiteAuth();
+      updateAuthUi(null);
+      setAuthStatus('Signed out of website account.');
+    });
   }
 }
 
@@ -1443,7 +1620,13 @@ export async function setUpSidePanel(): Promise<void> {
 
     try {
       const baseUrl = getBackendBaseUrl();
-      const started = await startMeetingBot(baseUrl, meetingUrl, getAppUserId());
+      const userId = getAppUserId();
+      if (!userId) {
+        setStatus('Sign in with your website account before starting the bot.');
+        return;
+      }
+
+      const started = await startMeetingBot(baseUrl, meetingUrl, userId);
       botLiveState.botId = started.botId;
       botLiveState.meetingUrl = meetingUrl;
       botLiveState.latestSeq = 0;
@@ -1485,12 +1668,18 @@ export async function setUpSidePanel(): Promise<void> {
       setStatus('Generating study pack...');
 
       const baseUrl = getBackendBaseUrl();
+      const userId = getAppUserId();
+      if (!userId) {
+        setStatus('Sign in with your website account before generating a study pack.');
+        return;
+      }
+
       await importMeetTranscriptText({
         baseUrl,
         transcriptText,
         title: getMeetingTitleForStudy(),
         botId: botLiveState.botId ?? undefined,
-        userId: getAppUserId(),
+        userId,
         meetingUrl: botLiveState.meetingUrl ?? undefined,
       });
       const result = await generateStudyPack({
@@ -1498,7 +1687,7 @@ export async function setUpSidePanel(): Promise<void> {
         transcriptText,
         title: getMeetingTitleForStudy(),
         botId: botLiveState.botId ?? undefined,
-        userId: getAppUserId(),
+        userId,
       });
 
       renderStudyResult(result);
@@ -1533,7 +1722,7 @@ export async function setUpSidePanel(): Promise<void> {
 
   setupSidePanelTranscriptBridge();
   initializeBackendUrlInput();
-  initializeAppUserIdInput();
+  await initializeWebsiteAuth(getBackendBaseUrl());
   clearTranscript();
   clearStudyResult();
   setControlState(false);

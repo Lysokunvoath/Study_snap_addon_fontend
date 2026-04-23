@@ -134,6 +134,47 @@
         gap: 8px;
       }
 
+      .auth-card {
+        display: grid;
+        gap: 12px;
+        margin: 0 0 14px;
+        padding: 16px;
+        border: 1px solid rgba(15, 98, 254, 0.12);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.62);
+      }
+
+      .auth-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .auth-title {
+        display: grid;
+        gap: 4px;
+      }
+
+      .auth-title strong {
+        font-size: 14px;
+        color: #0f172a;
+      }
+
+      .auth-title span {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .auth-user {
+        font-size: 12px;
+        color: #0f172a;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: rgba(15, 98, 254, 0.06);
+        border: 1px solid rgba(15, 98, 254, 0.1);
+      }
+
       .field {
         margin: 0 0 14px;
       }
@@ -339,21 +380,39 @@
           />
         </div>
 
+        <div class="auth-card">
+          <div class="auth-header">
+            <div class="auth-title">
+              <strong>Website account</strong>
+              <span>Sign in with the same Study Snap account you use on the website.</span>
+            </div>
+            <div id="auth-status" class="status">Signed out</div>
+          </div>
+
+          <div id="auth-user-display" class="auth-user">No website account connected.</div>
+
+          <div class="field">
+            <label for="auth-email">Email</label>
+            <input id="auth-email" type="email" placeholder="you@example.com" />
+          </div>
+
+          <div class="field">
+            <label for="auth-password">Password</label>
+            <input id="auth-password" type="password" placeholder="Your Study Snap password" />
+          </div>
+
+          <div class="button-row">
+            <button id="auth-login" class="secondary">Sign In</button>
+            <button id="auth-logout" class="ghost" disabled>Sign Out</button>
+          </div>
+        </div>
+
         <div class="field">
           <label for="meeting-url">Meeting URL</label>
           <input
             id="meeting-url"
             type="text"
             placeholder="https://meet.google.com/abc-defg-hij"
-          />
-        </div>
-
-        <div class="field">
-          <label for="app-user-id">App User ID (optional)</label>
-          <input
-            id="app-user-id"
-            type="text"
-            placeholder="Supabase app_users.id UUID"
           />
         </div>
 
