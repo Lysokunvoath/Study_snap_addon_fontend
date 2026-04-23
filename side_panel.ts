@@ -179,6 +179,7 @@ let captureWorkletModuleUrl: string | null = null;
 const USER_KEY_STORAGE_KEY = 'studySnap.userKey';
 const WEBSITE_AUTH_TOKEN_STORAGE_KEY = 'studySnap.websiteAuthToken';
 const WEBSITE_AUTH_USER_STORAGE_KEY = 'studySnap.websiteAuthUser';
+const WEBSITE_AUTH_BASE_URL_STORAGE_KEY = 'studySnap.websiteAuthBaseUrl';
 
 declare global {
   interface Window {
@@ -234,9 +235,31 @@ function getStoredBackendBaseUrl(): string | null {
   }
 }
 
+function getStoredWebsiteAuthBaseUrl(): string | null {
+  try {
+    const value = window.localStorage.getItem(WEBSITE_AUTH_BASE_URL_STORAGE_KEY);
+    if (!value) {
+      return null;
+    }
+
+    const normalized = normalizeBaseUrl(value);
+    return normalized || null;
+  } catch {
+    return null;
+  }
+}
+
 function setStoredBackendBaseUrl(baseUrl: string): void {
   try {
     window.localStorage.setItem(BACKEND_URL_STORAGE_KEY, baseUrl);
+  } catch {
+    // Ignore storage errors (private mode, blocked storage, etc.).
+  }
+}
+
+function setStoredWebsiteAuthBaseUrl(baseUrl: string): void {
+  try {
+    window.localStorage.setItem(WEBSITE_AUTH_BASE_URL_STORAGE_KEY, baseUrl);
   } catch {
     // Ignore storage errors (private mode, blocked storage, etc.).
   }
@@ -259,6 +282,23 @@ function initializeBackendUrlInput(): void {
   });
 }
 
+function initializeWebsiteAuthUrlInput(): void {
+  const input = document.getElementById('website-auth-url') as HTMLInputElement | null;
+  if (!input) {
+    return;
+  }
+
+  const stored = getStoredWebsiteAuthBaseUrl();
+  const defaultValue = stored ?? 'http://localhost:3000';
+  input.value = defaultValue;
+
+  input.addEventListener('change', () => {
+    const normalized = normalizeBaseUrl(input.value) || 'http://localhost:3000';
+    input.value = normalized;
+    setStoredWebsiteAuthBaseUrl(normalized);
+  });
+}
+
 function getBackendBaseUrl(): string {
   const input = document.getElementById('backend-url') as HTMLInputElement | null;
   const fallback = getStoredBackendBaseUrl() ?? DEFAULT_BACKEND_BASE_URL;
@@ -271,6 +311,21 @@ function getBackendBaseUrl(): string {
   const resolved = value || fallback;
 
   setStoredBackendBaseUrl(resolved);
+  return resolved;
+}
+
+function getWebsiteAuthBaseUrl(): string {
+  const input = document.getElementById('website-auth-url') as HTMLInputElement | null;
+  const fallback = getStoredWebsiteAuthBaseUrl() ?? 'http://localhost:3000';
+
+  if (!input) {
+    return fallback;
+  }
+
+  const value = normalizeBaseUrl(input.value);
+  const resolved = value || fallback;
+
+  setStoredWebsiteAuthBaseUrl(resolved);
   return resolved;
 }
 
@@ -1722,7 +1777,8 @@ export async function setUpSidePanel(): Promise<void> {
 
   setupSidePanelTranscriptBridge();
   initializeBackendUrlInput();
-  await initializeWebsiteAuth(getBackendBaseUrl());
+  initializeWebsiteAuthUrlInput();
+  await initializeWebsiteAuth(getWebsiteAuthBaseUrl());
   clearTranscript();
   clearStudyResult();
   setControlState(false);
