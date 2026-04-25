@@ -6,7 +6,7 @@ const RECORDER_CONTROL_CHANNEL_NAME = 'study-snap-recorder-control';
 const BACKEND_URL_STORAGE_KEY = 'studySnap.backendUrl';
 const APP_USER_ID_STORAGE_KEY = 'studySnap.appUserId';
 const DEFAULT_BACKEND_BASE_URL =
-  'https://studysnapaddonbackend-production.up.railway.app';
+  'https://study-snap-addon-backend.railway.internal';
 
 type MainStageEvent =
   | { type: 'status'; payload: { text: string } }
