@@ -330,21 +330,48 @@ function getWebsiteAuthBaseUrl(): string {
 }
 
 function initializeAppUserIdInput(): void {
-  // No-op: website auth now drives the addon identity.
+  const input = document.getElementById('app-user-id') as HTMLInputElement | null;
+  if (!input) {
+    return;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(APP_USER_ID_STORAGE_KEY)?.trim() ?? '';
+    input.value = stored;
+  } catch {
+    // Ignore storage read errors.
+  }
+
+  input.addEventListener('change', () => {
+    const userId = input.value.trim();
+
+    try {
+      if (userId) {
+        window.localStorage.setItem(APP_USER_ID_STORAGE_KEY, userId);
+      } else {
+        window.localStorage.removeItem(APP_USER_ID_STORAGE_KEY);
+      }
+    } catch {
+      // Ignore storage write errors.
+    }
+  });
 }
 
 function getAppUserId(): string | undefined {
   try {
-    const storedUser = window.localStorage.getItem(WEBSITE_AUTH_USER_STORAGE_KEY);
-    if (storedUser) {
-      const parsed = JSON.parse(storedUser) as Partial<WebsiteAuthUser> | null;
-      const userId = String(parsed?.id ?? '').trim();
-      if (userId) {
-        return userId;
-      }
+    const input = document.getElementById('app-user-id') as HTMLInputElement | null;
+    const inputUserId = input?.value.trim() ?? '';
+    if (inputUserId) {
+      window.localStorage.setItem(APP_USER_ID_STORAGE_KEY, inputUserId);
+      return inputUserId;
+    }
+
+    const storedUserId = window.localStorage.getItem(APP_USER_ID_STORAGE_KEY)?.trim() ?? '';
+    if (storedUserId) {
+      return storedUserId;
     }
   } catch {
-    // Ignore storage parse errors.
+    // Ignore storage access errors.
   }
 
   return undefined;
@@ -1626,36 +1653,15 @@ async function startTranscription(): Promise<void> {
 }
 
 export async function setUpSidePanel(): Promise<void> {
-  const session = await meet.addon.createAddonSession({
-    cloudProjectNumber: getCloudProjectNumber(),
-  });
-
-  const sidePanelClient = await session.createSidePanelClient();
-  const startButton = document.getElementById('start-activity');
-
-  if (!startButton) {
-    throw new Error('Could not find #start-activity button in SidePanel.html');
-  }
-
   const startMeetingBotButton = document.getElementById('start-meeting-bot') as HTMLButtonElement | null;
   const stopMeetingBotButton = document.getElementById('stop-meeting-bot') as HTMLButtonElement | null;
-  const generateStudyButton = document.getElementById('generate-study') as HTMLButtonElement | null;
-  const clearButton = document.getElementById('clear-transcript') as HTMLButtonElement | null;
 
   if (
     !startMeetingBotButton ||
-    !stopMeetingBotButton ||
-    !generateStudyButton ||
-    !clearButton
+    !stopMeetingBotButton
   ) {
-    throw new Error('Could not find transcription controls in SidePanel.html');
+    throw new Error('Could not find meeting bot controls in SidePanel.html');
   }
-
-  startButton.addEventListener('click', async () => {
-    await sidePanelClient.startActivity({
-      mainStageUrl: getDefaultMainStageUrl(),
-    });
-  });
 
   startMeetingBotButton.addEventListener('click', async () => {
     let meetingUrl = getMeetingUrlInputValue();
@@ -1677,7 +1683,7 @@ export async function setUpSidePanel(): Promise<void> {
       const baseUrl = getBackendBaseUrl();
       const userId = getAppUserId();
       if (!userId) {
-        setStatus('Sign in with your website account before starting the bot.');
+        setStatus('Enter user_id before starting the bot.');
         return;
       }
 
@@ -1711,58 +1717,6 @@ export async function setUpSidePanel(): Promise<void> {
     }
   });
 
-  generateStudyButton.addEventListener('click', async () => {
-    const transcriptText = getTranscriptTextForStudy();
-    if (!transcriptText.trim()) {
-      setStatus('Generate study cancelled: no transcript lines captured yet.');
-      return;
-    }
-
-    try {
-      generateStudyButton.disabled = true;
-      setStatus('Generating study pack...');
-
-      const baseUrl = getBackendBaseUrl();
-      const userId = getAppUserId();
-      if (!userId) {
-        setStatus('Sign in with your website account before generating a study pack.');
-        return;
-      }
-
-      await importMeetTranscriptText({
-        baseUrl,
-        transcriptText,
-        title: getMeetingTitleForStudy(),
-        botId: botLiveState.botId ?? undefined,
-        userId,
-        meetingUrl: botLiveState.meetingUrl ?? undefined,
-      });
-      const result = await generateStudyPack({
-        baseUrl,
-        transcriptText,
-        title: getMeetingTitleForStudy(),
-        botId: botLiveState.botId ?? undefined,
-        userId,
-      });
-
-      renderStudyResult(result);
-      setStatus(
-        `Study pack ready: ${result.flashcards.length} flashcards generated and saved.`
-      );
-    } catch (error) {
-      setStatus(`Generate study failed: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      generateStudyButton.disabled = false;
-    }
-  });
-
-  clearButton.addEventListener('click', () => {
-    clearTranscript();
-    clearStudyResult();
-    resetLiveSyncBuffer();
-    stopMeetingBotPolling();
-  });
-
   window.addEventListener('beforeunload', () => {
     if (liveSyncState.timerId) {
       window.clearInterval(liveSyncState.timerId);
@@ -1777,10 +1731,8 @@ export async function setUpSidePanel(): Promise<void> {
 
   setupSidePanelTranscriptBridge();
   initializeBackendUrlInput();
-  initializeWebsiteAuthUrlInput();
-  await initializeWebsiteAuth(getWebsiteAuthBaseUrl());
+  initializeAppUserIdInput();
   clearTranscript();
-  clearStudyResult();
   setControlState(false);
   setMeetingBotButtons(false);
   setStatus('Ready. Start Meeting Bot and admit it in Meet.');

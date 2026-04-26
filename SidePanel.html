@@ -381,40 +381,12 @@
         </div>
 
         <div class="field">
-          <label for="website-auth-url">Website Auth URL</label>
+          <label for="app-user-id">User ID</label>
           <input
-            id="website-auth-url"
+            id="app-user-id"
             type="text"
-            value="http://localhost:3000"
-            placeholder="http://localhost:3000 or your deployed website URL"
+            placeholder="Enter your Study Snap user_id"
           />
-        </div>
-
-        <div class="auth-card">
-          <div class="auth-header">
-            <div class="auth-title">
-              <strong>Website account</strong>
-              <span>Sign in with the same Study Snap account you use on the website.</span>
-            </div>
-            <div id="auth-status" class="status">Signed out</div>
-          </div>
-
-          <div id="auth-user-display" class="auth-user">No website account connected.</div>
-
-          <div class="field">
-            <label for="auth-email">Email</label>
-            <input id="auth-email" type="email" placeholder="you@example.com" />
-          </div>
-
-          <div class="field">
-            <label for="auth-password">Password</label>
-            <input id="auth-password" type="password" placeholder="Your Study Snap password" />
-          </div>
-
-          <div class="button-row">
-            <button id="auth-login" class="secondary">Sign In</button>
-            <button id="auth-logout" class="ghost" disabled>Sign Out</button>
-          </div>
         </div>
 
         <div class="field">
@@ -432,11 +404,8 @@
         </div>
 
         <div class="button-row">
-          <button id="start-activity" class="secondary">Open Main Stage</button>
-          <button id="start-meeting-bot" class="secondary">Start Meeting Bot</button>
-          <button id="stop-meeting-bot" class="ghost" disabled>Stop Meeting Bot</button>
-          <button id="generate-study" class="secondary">Generate Study Pack</button>
-          <button id="clear-transcript" class="ghost">Clear</button>
+          <button id="start-meeting-bot" class="secondary">Start Bot</button>
+          <button id="stop-meeting-bot" class="ghost" disabled>Stop Bot</button>
         </div>
 
         <div id="transcript" class="transcript">
