@@ -1653,6 +1653,17 @@ async function startTranscription(): Promise<void> {
 }
 
 export async function setUpSidePanel(): Promise<void> {
+  // Attempt Meet side panel session initialization, but do not block the UI if it fails.
+  try {
+    const session = await meet.addon.createAddonSession({
+      cloudProjectNumber: getCloudProjectNumber(),
+    });
+
+    await session.createSidePanelClient();
+  } catch (error) {
+    console.warn('Side panel client initialization skipped:', error);
+  }
+
   const startMeetingBotButton = document.getElementById('start-meeting-bot') as HTMLButtonElement | null;
   const stopMeetingBotButton = document.getElementById('stop-meeting-bot') as HTMLButtonElement | null;
 
@@ -1660,7 +1671,8 @@ export async function setUpSidePanel(): Promise<void> {
     !startMeetingBotButton ||
     !stopMeetingBotButton
   ) {
-    throw new Error('Could not find meeting bot controls in SidePanel.html');
+    setStatus('Side panel controls are missing. Reload the extension panel.');
+    return;
   }
 
   startMeetingBotButton.addEventListener('click', async () => {
