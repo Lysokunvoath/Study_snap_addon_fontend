@@ -129,6 +129,7 @@ type LiveSyncState = {
 type BotLiveState = {
   botId: string | null;
   meetingUrl: string | null;
+  userId: string | null;
   timerId: number | null;
   latestSeq: number;
 };
@@ -169,9 +170,12 @@ const liveSyncState: LiveSyncState = {
 const botLiveState: BotLiveState = {
   botId: null,
   meetingUrl: null,
+  userId: null,
   timerId: null,
   latestSeq: 0,
 };
+
+const transcriptLinesBuffer: string[] = [];
 
 let mainStageChannel: BroadcastChannel | null = null;
 let recorderControlChannel: BroadcastChannel | null = null;
@@ -1043,6 +1047,7 @@ function stopMeetingBotPolling(statusMessage?: string): void {
 
   botLiveState.botId = null;
   botLiveState.meetingUrl = null;
+  botLiveState.userId = null;
   botLiveState.latestSeq = 0;
   setMeetingBotButtons(false);
 
@@ -1060,13 +1065,14 @@ async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<vo
   }
 
   const transcriptText = getTranscriptTextForStudy();
+  const targetUserId = botLiveState.userId;
   if (transcriptText.trim()) {
     await importMeetTranscriptText({
       baseUrl,
       transcriptText,
       title: getMeetingTitleForStudy(),
       botId,
-      userId: getAppUserId(),
+      userId: targetUserId ?? undefined,
       meetingUrl: botLiveState.meetingUrl ?? undefined,
     });
   }
@@ -1161,26 +1167,29 @@ async function connectGoogleAccount(baseUrl: string, userKey: string): Promise<v
 }
 
 function appendFinalLine(text: string, shouldBroadcast = true): void {
+  const normalized = text.trim();
+  if (normalized) {
+    transcriptLinesBuffer.push(normalized);
+  }
+
   const transcript = document.getElementById('transcript');
-  if (!transcript) {
-    return;
-  }
+  if (transcript) {
+    const empty = transcript.querySelector('.empty');
+    if (empty) {
+      empty.remove();
+    }
 
-  const empty = transcript.querySelector('.empty');
-  if (empty) {
-    empty.remove();
-  }
+    if (transcriptionState.partialLine) {
+      transcriptionState.partialLine.remove();
+      transcriptionState.partialLine = null;
+    }
 
-  if (transcriptionState.partialLine) {
-    transcriptionState.partialLine.remove();
-    transcriptionState.partialLine = null;
+    const line = document.createElement('div');
+    line.className = 'line final';
+    line.textContent = text;
+    transcript.appendChild(line);
+    transcript.scrollTop = transcript.scrollHeight;
   }
-
-  const line = document.createElement('div');
-  line.className = 'line final';
-  line.textContent = text;
-  transcript.appendChild(line);
-  transcript.scrollTop = transcript.scrollHeight;
 
   if (shouldBroadcast) {
     emitMainStageEvent({
@@ -1220,13 +1229,13 @@ function upsertPartialLine(text: string, shouldBroadcast = true): void {
 }
 
 function clearTranscript(shouldBroadcast = true): void {
-  const transcript = document.getElementById('transcript');
-  if (!transcript) {
-    return;
-  }
-
-  transcript.innerHTML = '<div class="empty">Transcript will appear here.</div>';
+  transcriptLinesBuffer.length = 0;
   transcriptionState.partialLine = null;
+
+  const transcript = document.getElementById('transcript');
+  if (transcript) {
+    transcript.innerHTML = '<div class="empty">Transcript will appear here.</div>';
+  }
 
   if (shouldBroadcast) {
     emitMainStageEvent({
@@ -1237,16 +1246,7 @@ function clearTranscript(shouldBroadcast = true): void {
 }
 
 function getTranscriptTextForStudy(): string {
-  const transcript = document.getElementById('transcript');
-  if (!transcript) {
-    return '';
-  }
-
-  const lines = Array.from(transcript.querySelectorAll('.line.final'))
-    .map((node) => (node.textContent ?? '').trim())
-    .filter(Boolean);
-
-  return lines.join('\n');
+  return transcriptLinesBuffer.join('\n');
 }
 
 function clearStudyResult(): void {
@@ -1702,6 +1702,7 @@ export async function setUpSidePanel(): Promise<void> {
       const started = await startMeetingBot(baseUrl, meetingUrl, userId);
       botLiveState.botId = started.botId;
       botLiveState.meetingUrl = meetingUrl;
+      botLiveState.userId = userId;
       botLiveState.latestSeq = 0;
       clearTranscript();
       setMeetingBotButtons(true);
