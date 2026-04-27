@@ -6,7 +6,7 @@ const RECORDER_CONTROL_CHANNEL_NAME = 'study-snap-recorder-control';
 const BACKEND_URL_STORAGE_KEY = 'studySnap.backendUrl';
 const APP_USER_ID_STORAGE_KEY = 'studySnap.appUserId';
 const DEFAULT_BACKEND_BASE_URL =
-  'https://study-snap-addon-backend.railway.internal';
+  'https://study-snap-addon-backend.up.railway.app';
 
 type MainStageEvent =
   | { type: 'status'; payload: { text: string } }
@@ -225,6 +225,45 @@ function normalizeBaseUrl(rawUrl: string): string {
   return withoutTrailingSlash;
 }
 
+function isPrivateOrLocalBackendUrl(baseUrl: string): boolean {
+  try {
+    const { hostname } = new URL(baseUrl);
+    return (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname.endsWith('.internal')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function migrateLegacyBackendBaseUrl(baseUrl: string): string {
+  const normalized = normalizeBaseUrl(baseUrl);
+  if (!normalized) {
+    return normalized;
+  }
+
+  if (isPrivateOrLocalBackendUrl(normalized)) {
+    return DEFAULT_BACKEND_BASE_URL;
+  }
+
+  return normalized;
+}
+
+function getBackendUrlValidationError(baseUrl: string): string | null {
+  if (!/^https?:\/\//i.test(baseUrl)) {
+    return 'Backend URL must start with http:// or https://';
+  }
+
+  if (isPrivateOrLocalBackendUrl(baseUrl)) {
+    return 'Backend URL must be publicly reachable. Use your public backend URL (for example *.up.railway.app), not localhost or *.internal.';
+  }
+
+  return null;
+}
+
 function getStoredBackendBaseUrl(): string | null {
   try {
     const value = window.localStorage.getItem(BACKEND_URL_STORAGE_KEY);
@@ -232,7 +271,10 @@ function getStoredBackendBaseUrl(): string | null {
       return null;
     }
 
-    const normalized = normalizeBaseUrl(value);
+    const normalized = migrateLegacyBackendBaseUrl(value);
+    if (normalized && normalized !== value) {
+      window.localStorage.setItem(BACKEND_URL_STORAGE_KEY, normalized);
+    }
     return normalized || null;
   } catch {
     return null;
@@ -280,7 +322,7 @@ function initializeBackendUrlInput(): void {
   input.value = defaultValue;
 
   input.addEventListener('change', () => {
-    const normalized = normalizeBaseUrl(input.value) || DEFAULT_BACKEND_BASE_URL;
+    const normalized = migrateLegacyBackendBaseUrl(input.value) || DEFAULT_BACKEND_BASE_URL;
     input.value = normalized;
     setStoredBackendBaseUrl(normalized);
   });
@@ -311,7 +353,7 @@ function getBackendBaseUrl(): string {
     return fallback;
   }
 
-  const value = normalizeBaseUrl(input.value);
+  const value = migrateLegacyBackendBaseUrl(input.value);
   const resolved = value || fallback;
 
   setStoredBackendBaseUrl(resolved);
@@ -888,16 +930,23 @@ async function startMeetingBot(
   meetingUrl: string,
   userId?: string
 ): Promise<BotStartResponse> {
-  const response = await fetch(`${baseUrl}/api/bot/start`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      meetingUrl,
-      ...(userId ? { userId } : {}),
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/api/bot/start`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        meetingUrl,
+        ...(userId ? { userId } : {}),
+      }),
+    });
+  } catch {
+    throw new Error(
+      `Cannot reach backend at ${baseUrl}. Use a public backend URL (for example *.up.railway.app), then try again.`
+    );
+  }
 
   if (!response.ok) {
     const message = await response.text();
@@ -1693,6 +1742,12 @@ export async function setUpSidePanel(): Promise<void> {
 
     try {
       const baseUrl = getBackendBaseUrl();
+      const backendUrlError = getBackendUrlValidationError(baseUrl);
+      if (backendUrlError) {
+        setStatus(`Start bot failed: ${backendUrlError}`);
+        return;
+      }
+
       const userId = getAppUserId();
       if (!userId) {
         setStatus('Enter user_id before starting the bot.');
