@@ -39,6 +39,8 @@ type TranscriptImportResponse = {
   importedLineCount: number;
   lines: string[];
   meetingId?: string | null;
+  persisted?: boolean;
+  persistenceError?: string | null;
   title?: string;
 };
 
@@ -1363,11 +1365,21 @@ async function importLiveTranscriptToBackend(baseUrl: string): Promise<void> {
     return;
   }
 
-  await importMeetTranscriptText({
+  const userId = getAppUserId();
+  const meetingUrl = botLiveState.meetingUrl ?? getMeetingUrlInputValue() ?? undefined;
+
+  const response = await importMeetTranscriptText({
     baseUrl,
     transcriptText,
     title: getMeetingTitleForStudy(),
+    userId,
+    meetingUrl,
   });
+
+  if (response.persisted === false) {
+    const reason = response.persistenceError ?? 'no meetingId returned by backend';
+    throw new Error(`Transcript sent but not saved to Supabase: ${reason}`);
+  }
 
   transcriptionState.lastImportedTranscriptText = transcriptText;
 }
@@ -1688,7 +1700,7 @@ async function stopTranscription(): Promise<void> {
     transcriptionState.pendingSamples = [];
     transcriptionState.sessionStarted = false;
     setControlState(false);
-    setStatus('Stopped');
+    setStatus('Stopped. Transcript saved to backend.');
   } catch (error) {
     setStatus(`Stop failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
