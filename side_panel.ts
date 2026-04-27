@@ -6,7 +6,13 @@ const RECORDER_CONTROL_CHANNEL_NAME = 'study-snap-recorder-control';
 const BACKEND_URL_STORAGE_KEY = 'studySnap.backendUrl';
 const APP_USER_ID_STORAGE_KEY = 'studySnap.appUserId';
 const DEFAULT_BACKEND_BASE_URL =
-  'https://study-snap-addon-backend.up.railway.app';
+  'https://studysnapaddonbackend-production-45ff.up.railway.app';
+const DEPRECATED_BACKEND_BASE_URLS = new Set<string>([
+  'https://study-snap-addon-backend.up.railway.app',
+  'https://studysnapaddonbackend-production.up.railway.app',
+  'https://study-snap-addon-backend.railway.internal',
+  'https://studysnapaddonbackend.railway.internal',
+]);
 
 type MainStageEvent =
   | { type: 'status'; payload: { text: string } }
@@ -254,6 +260,11 @@ function migrateLegacyBackendBaseUrl(baseUrl: string): string {
   const normalized = normalizeBaseUrl(baseUrl);
   if (!normalized) {
     return normalized;
+  }
+
+  const normalizedLower = normalized.toLowerCase();
+  if (DEPRECATED_BACKEND_BASE_URLS.has(normalizedLower)) {
+    return DEFAULT_BACKEND_BASE_URL;
   }
 
   if (isPrivateOrLocalBackendUrl(normalized)) {
