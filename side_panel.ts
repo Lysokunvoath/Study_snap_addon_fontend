@@ -134,6 +134,7 @@ type BotLiveState = {
   latestSeq: number;
   seenLineSignatures: Set<string>;
   isStarting: boolean;
+  lastImportedTranscriptText: string;
 };
 
 type TranscriptionState = {
@@ -177,6 +178,7 @@ const botLiveState: BotLiveState = {
   latestSeq: 0,
   seenLineSignatures: new Set<string>(),
   isStarting: false,
+  lastImportedTranscriptText: '',
 };
 
 const transcriptLinesBuffer: string[] = [];
@@ -1105,6 +1107,7 @@ function stopMeetingBotPolling(statusMessage?: string): void {
   botLiveState.latestSeq = 0;
   botLiveState.seenLineSignatures.clear();
   botLiveState.isStarting = false;
+  botLiveState.lastImportedTranscriptText = '';
   setMeetingBotButtons(false);
 
   if (statusMessage) {
@@ -1125,9 +1128,6 @@ async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<vo
   for (const line of transcript.lines) {
     const seq = Number(line.seq ?? 0);
     if (Number.isFinite(seq) && seq > 0) {
-      if (seq <= botLiveState.latestSeq) {
-        continue;
-      }
       if (seq > maxProcessedSeq) {
         maxProcessedSeq = seq;
       }
@@ -1151,15 +1151,21 @@ async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<vo
 
   const transcriptText = getTranscriptTextForStudy();
   const targetUserId = botLiveState.userId;
-  if (appendedCount > 0 && transcriptText.trim()) {
+  const normalizedTranscriptText = transcriptText.trim();
+  const shouldImport =
+    !!normalizedTranscriptText &&
+    (appendedCount > 0 || normalizedTranscriptText !== botLiveState.lastImportedTranscriptText);
+
+  if (shouldImport) {
     await importMeetTranscriptText({
       baseUrl,
-      transcriptText,
+      transcriptText: normalizedTranscriptText,
       title: getMeetingTitleForStudy(),
       botId,
       userId: targetUserId ?? undefined,
       meetingUrl: botLiveState.meetingUrl ?? undefined,
     });
+    botLiveState.lastImportedTranscriptText = normalizedTranscriptText;
   }
 
   botLiveState.latestSeq = maxProcessedSeq;
@@ -1815,6 +1821,7 @@ export async function setUpSidePanel(): Promise<void> {
       botLiveState.latestSeq = 0;
       botLiveState.seenLineSignatures.clear();
       botLiveState.isStarting = false;
+      botLiveState.lastImportedTranscriptText = '';
       clearTranscript();
       setMeetingBotButtons(true);
       setStatus(`Meeting bot started (ID: ${started.botId}). Admit it in Meet waiting room.`);
