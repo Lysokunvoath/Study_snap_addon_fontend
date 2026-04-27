@@ -148,6 +148,8 @@ type TranscriptionState = {
   pendingSamples: number[];
   seq: number;
   partialLine: HTMLDivElement | null;
+  isStopping: boolean;
+  lastImportedTranscriptText: string;
 };
 
 const transcriptionState: TranscriptionState = {
@@ -161,6 +163,8 @@ const transcriptionState: TranscriptionState = {
   pendingSamples: [],
   seq: 0,
   partialLine: null,
+  isStopping: false,
+  lastImportedTranscriptText: '',
 };
 
 const liveSyncState: LiveSyncState = {
@@ -1322,6 +1326,7 @@ function upsertPartialLine(text: string, shouldBroadcast = true): void {
 function clearTranscript(shouldBroadcast = true): void {
   transcriptLinesBuffer.length = 0;
   transcriptionState.partialLine = null;
+  transcriptionState.lastImportedTranscriptText = '';
 
   const transcript = document.getElementById('transcript');
   if (transcript) {
@@ -1338,6 +1343,22 @@ function clearTranscript(shouldBroadcast = true): void {
 
 function getTranscriptTextForStudy(): string {
   return transcriptLinesBuffer.join('\n');
+}
+
+async function importLiveTranscriptToBackend(baseUrl: string): Promise<void> {
+  const transcriptText = getTranscriptTextForStudy().trim();
+
+  if (!transcriptText || transcriptText === transcriptionState.lastImportedTranscriptText) {
+    return;
+  }
+
+  await importMeetTranscriptText({
+    baseUrl,
+    transcriptText,
+    title: getMeetingTitleForStudy(),
+  });
+
+  transcriptionState.lastImportedTranscriptText = transcriptText;
 }
 
 function clearStudyResult(): void {
@@ -1603,50 +1624,65 @@ function handleServerMessage(event: MessageEvent): void {
 }
 
 async function stopTranscription(): Promise<void> {
+  if (transcriptionState.isStopping) {
+    return;
+  }
+
+  transcriptionState.isStopping = true;
+
   const { ws, workletNode, processorNode, sourceNode, audioContext, stream } = transcriptionState;
+  const baseUrl = getBackendBaseUrl();
 
-  if (workletNode) {
-    workletNode.disconnect();
-    workletNode.port.onmessage = null;
-    transcriptionState.workletNode = null;
-  }
-
-  if (processorNode) {
-    processorNode.onaudioprocess = null;
-    processorNode.disconnect();
-    transcriptionState.processorNode = null;
-  }
-
-  if (sourceNode) {
-    sourceNode.disconnect();
-    transcriptionState.sourceNode = null;
-  }
-
-  if (audioContext) {
-    await audioContext.close().catch(() => {
-      // Ignore close errors in shutdown flow.
-    });
-    transcriptionState.audioContext = null;
-  }
-
-  if (stream) {
-    stream.getTracks().forEach((track) => track.stop());
-    transcriptionState.stream = null;
-  }
-
-  if (ws) {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'session.stop', payload: {} }));
+  try {
+    if (workletNode) {
+      workletNode.disconnect();
+      workletNode.port.onmessage = null;
+      transcriptionState.workletNode = null;
     }
-    ws.close();
-    transcriptionState.ws = null;
-  }
 
-  transcriptionState.seq = 0;
-  transcriptionState.pendingSamples = [];
-  transcriptionState.sessionStarted = false;
-  setControlState(false);
-  setStatus('Stopped');
+    if (processorNode) {
+      processorNode.onaudioprocess = null;
+      processorNode.disconnect();
+      transcriptionState.processorNode = null;
+    }
+
+    if (sourceNode) {
+      sourceNode.disconnect();
+      transcriptionState.sourceNode = null;
+    }
+
+    if (audioContext) {
+      await audioContext.close().catch(() => {
+        // Ignore close errors in shutdown flow.
+      });
+      transcriptionState.audioContext = null;
+    }
+
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      transcriptionState.stream = null;
+    }
+
+    if (ws) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'session.stop', payload: {} }));
+      }
+      ws.close();
+      transcriptionState.ws = null;
+    }
+
+    await importLiveTranscriptToBackend(baseUrl);
+
+    transcriptionState.seq = 0;
+    transcriptionState.pendingSamples = [];
+    transcriptionState.sessionStarted = false;
+    setControlState(false);
+    setStatus('Stopped');
+  } catch (error) {
+    setStatus(`Stop failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    transcriptionState.isStopping = false;
+  }
 }
 
 async function startTranscription(): Promise<void> {
