@@ -131,7 +131,7 @@ type LiveSyncState = {
   timerId: number | null;
   meetingCode: string | null;
   activeDocumentId: string | null;
-  seenLines: Set<string>;
+  processedLineCount: number;
 };
 
 type BotLiveState = {
@@ -140,7 +140,6 @@ type BotLiveState = {
   userId: string | null;
   timerId: number | null;
   latestSeq: number;
-  seenLineSignatures: Set<string>;
   isStarting: boolean;
   lastImportedTranscriptText: string;
 };
@@ -179,7 +178,7 @@ const liveSyncState: LiveSyncState = {
   timerId: null,
   meetingCode: null,
   activeDocumentId: null,
-  seenLines: new Set<string>(),
+  processedLineCount: 0,
 };
 
 const botLiveState: BotLiveState = {
@@ -188,7 +187,6 @@ const botLiveState: BotLiveState = {
   userId: null,
   timerId: null,
   latestSeq: 0,
-  seenLineSignatures: new Set<string>(),
   isStarting: false,
   lastImportedTranscriptText: '',
 };
@@ -1061,27 +1059,32 @@ function signatureForLine(text: string): string {
 
 function resetLiveSyncBuffer(): void {
   liveSyncState.activeDocumentId = null;
-  liveSyncState.seenLines.clear();
+  liveSyncState.processedLineCount = 0;
 }
 
 function applySyncedTranscriptLines(synced: TranscriptSyncResponse): number {
   if (liveSyncState.activeDocumentId !== synced.documentId) {
     liveSyncState.activeDocumentId = synced.documentId;
-    liveSyncState.seenLines.clear();
+    liveSyncState.processedLineCount = 0;
     clearTranscript();
   }
 
+  const startIndex = Math.max(0, liveSyncState.processedLineCount);
   let appended = 0;
-  for (const line of synced.lines) {
-    const signature = signatureForLine(line);
-    if (!signature || liveSyncState.seenLines.has(signature)) {
+  for (let i = startIndex; i < synced.lines.length; i += 1) {
+    const line = String(synced.lines[i] ?? '').trim();
+    if (!line) {
       continue;
     }
 
-    liveSyncState.seenLines.add(signature);
     appendFinalLine(line);
     appended += 1;
   }
+
+  liveSyncState.processedLineCount = Math.max(
+    liveSyncState.processedLineCount,
+    synced.lines.length
+  );
 
   return appended;
 }
@@ -1122,7 +1125,6 @@ function stopMeetingBotPolling(statusMessage?: string): void {
   botLiveState.meetingUrl = null;
   botLiveState.userId = null;
   botLiveState.latestSeq = 0;
-  botLiveState.seenLineSignatures.clear();
   botLiveState.isStarting = false;
   botLiveState.lastImportedTranscriptText = '';
   setMeetingBotButtons(false);
@@ -1130,10 +1132,6 @@ function stopMeetingBotPolling(statusMessage?: string): void {
   if (statusMessage) {
     setStatus(statusMessage);
   }
-}
-
-function signatureForBotLine(speaker: string | null, text: string): string {
-  return `${(speaker ?? '').trim().toLowerCase()}|${text.trim().toLowerCase()}`;
 }
 
 async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<void> {
@@ -1144,10 +1142,13 @@ async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<vo
 
   for (const line of transcript.lines) {
     const seq = Number(line.seq ?? 0);
-    if (Number.isFinite(seq) && seq > 0) {
-      if (seq > maxProcessedSeq) {
-        maxProcessedSeq = seq;
-      }
+    const hasValidSeq = Number.isFinite(seq) && seq > 0;
+    if (hasValidSeq && seq <= maxProcessedSeq) {
+      continue;
+    }
+
+    if (hasValidSeq) {
+      maxProcessedSeq = seq;
     }
 
     const normalizedText = String(line.text ?? '').trim();
@@ -1155,12 +1156,6 @@ async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<vo
       continue;
     }
 
-    const signature = signatureForBotLine(line.speaker, normalizedText);
-    if (botLiveState.seenLineSignatures.has(signature)) {
-      continue;
-    }
-
-    botLiveState.seenLineSignatures.add(signature);
     const speakerPrefix = line.speaker ? `${line.speaker}: ` : '';
     appendFinalLine(`${speakerPrefix}${normalizedText}`);
     appendedCount += 1;
@@ -1878,7 +1873,6 @@ export async function setUpSidePanel(): Promise<void> {
       botLiveState.meetingUrl = meetingUrl;
       botLiveState.userId = userId;
       botLiveState.latestSeq = 0;
-      botLiveState.seenLineSignatures.clear();
       botLiveState.isStarting = false;
       botLiveState.lastImportedTranscriptText = '';
       clearTranscript();
