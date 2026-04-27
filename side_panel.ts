@@ -382,6 +382,21 @@ function getBackendBaseUrl(): string {
   return resolved;
 }
 
+function getBotBackendBaseUrl(): string {
+  const resolved = normalizeBaseUrl(getBackendBaseUrl());
+  const pinned = normalizeBaseUrl(DEFAULT_BACKEND_BASE_URL);
+
+  if (resolved !== pinned) {
+    setStoredBackendBaseUrl(pinned);
+    const input = document.getElementById('backend-url') as HTMLInputElement | null;
+    if (input) {
+      input.value = pinned;
+    }
+  }
+
+  return pinned;
+}
+
 function getWebsiteAuthBaseUrl(): string {
   const input = document.getElementById('website-auth-url') as HTMLInputElement | null;
   const fallback = getStoredWebsiteAuthBaseUrl() ?? 'http://localhost:3000';
@@ -1855,7 +1870,7 @@ export async function setUpSidePanel(): Promise<void> {
       botLiveState.isStarting = true;
       setMeetingBotButtons(true);
 
-      const baseUrl = getBackendBaseUrl();
+      const baseUrl = getBotBackendBaseUrl();
       const backendUrlError = getBackendUrlValidationError(baseUrl);
       if (backendUrlError) {
         setStatus(`Start bot failed: ${backendUrlError}`);
@@ -1877,7 +1892,9 @@ export async function setUpSidePanel(): Promise<void> {
       botLiveState.lastImportedTranscriptText = '';
       clearTranscript();
       setMeetingBotButtons(true);
-      setStatus(`Meeting bot started (ID: ${started.botId}). Admit it in Meet waiting room.`);
+      setStatus(
+        `Meeting bot started (ID: ${started.botId}) via ${baseUrl}. Admit it in Meet waiting room.`
+      );
       await beginMeetingBotPolling(baseUrl, started.botId);
     } catch (error) {
       stopMeetingBotPolling();
@@ -1898,7 +1915,7 @@ export async function setUpSidePanel(): Promise<void> {
     }
 
     try {
-      const baseUrl = getBackendBaseUrl();
+      const baseUrl = getBotBackendBaseUrl();
       await stopMeetingBot(baseUrl, botId);
       stopMeetingBotPolling('Meeting bot stopped.');
     } catch (error) {
