@@ -13,6 +13,7 @@ const DEPRECATED_BACKEND_BASE_URLS = new Set<string>([
   'https://study-snap-addon-backend.railway.internal',
   'https://studysnapaddonbackend.railway.internal',
 ]);
+const LIVE_TRANSCRIPT_ENABLED = false;
 const DISABLE_TRANSCRIPT_DEDUPE_FOR_DEBUG = true;
 
 type MainStageEvent =
@@ -709,7 +710,7 @@ function setStatus(text: string, shouldBroadcast = true): void {
     status.textContent = text;
   }
 
-  if (shouldBroadcast) {
+  if (LIVE_TRANSCRIPT_ENABLED && shouldBroadcast) {
     emitMainStageEvent({
       type: 'status',
       payload: { text },
@@ -767,11 +768,11 @@ function setControlState(isRunning: boolean): void {
   const backendInput = document.getElementById('backend-url') as HTMLInputElement | null;
 
   if (startButton) {
-    startButton.disabled = isRunning;
+    startButton.disabled = true;
   }
 
   if (stopButton) {
-    stopButton.disabled = !isRunning;
+    stopButton.disabled = true;
   }
 
   if (backendInput) {
@@ -1185,54 +1186,8 @@ async function gracefulStopMeetingBotPolling(baseUrl: string, botId: string): Pr
 }
 
 async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<void> {
-  const transcript = await pollMeetingBotTranscript(baseUrl, botId, botLiveState.latestSeq);
-
-  let appendedCount = 0;
-  let maxProcessedSeq = botLiveState.latestSeq;
-
-  for (const line of transcript.lines) {
-    const seq = Number(line.seq ?? 0);
-    const hasValidSeq = Number.isFinite(seq) && seq > 0;
-    if (!DISABLE_TRANSCRIPT_DEDUPE_FOR_DEBUG && hasValidSeq && seq <= maxProcessedSeq) {
-      continue;
-    }
-
-    if (hasValidSeq) {
-      maxProcessedSeq = seq;
-    }
-
-    const normalizedText = String(line.text ?? '').trim();
-    if (!normalizedText) {
-      continue;
-    }
-
-    const speakerPrefix = line.speaker ? `${line.speaker}: ` : '';
-    appendFinalLine(`${speakerPrefix}${normalizedText}`);
-    appendedCount += 1;
-  }
-
-  const transcriptText = getTranscriptTextForStudy();
-  const targetUserId = botLiveState.userId;
-  const normalizedTranscriptText = transcriptText.trim();
-  const shouldImport =
-    !!normalizedTranscriptText &&
-    (appendedCount > 0 || normalizedTranscriptText !== botLiveState.lastImportedTranscriptText);
-
-  if (shouldImport) {
-    await importMeetTranscriptText({
-      baseUrl,
-      transcriptText: normalizedTranscriptText,
-      title: getMeetingTitleForStudy(),
-      botId,
-      userId: targetUserId ?? undefined,
-      meetingUrl: botLiveState.meetingUrl ?? undefined,
-    });
-    botLiveState.lastImportedTranscriptText = normalizedTranscriptText;
-  }
-
-  botLiveState.latestSeq = maxProcessedSeq;
   const status = await getMeetingBotStatus(baseUrl, botId);
-  setStatus(`Meeting bot ${status.status}. ${status.lineCount} line(s) captured.`);
+  setStatus(`Meeting bot ${status.status}.`);
 }
 
 async function beginMeetingBotPolling(baseUrl: string, botId: string): Promise<void> {
@@ -1320,6 +1275,10 @@ async function connectGoogleAccount(baseUrl: string, userKey: string): Promise<v
 }
 
 function appendFinalLine(text: string, shouldBroadcast = true): void {
+  if (!LIVE_TRANSCRIPT_ENABLED) {
+    return;
+  }
+
   const normalized = text.trim();
   if (normalized) {
     transcriptLinesBuffer.push(normalized);
@@ -1353,6 +1312,10 @@ function appendFinalLine(text: string, shouldBroadcast = true): void {
 }
 
 function upsertPartialLine(text: string, shouldBroadcast = true): void {
+  if (!LIVE_TRANSCRIPT_ENABLED) {
+    return;
+  }
+
   const transcript = document.getElementById('transcript');
   if (!transcript) {
     return;
@@ -1388,10 +1351,12 @@ function clearTranscript(shouldBroadcast = true): void {
 
   const transcript = document.getElementById('transcript');
   if (transcript) {
-    transcript.innerHTML = '<div class="empty">Transcript will appear here.</div>';
+    transcript.innerHTML = LIVE_TRANSCRIPT_ENABLED
+      ? '<div class="empty">Transcript will appear here.</div>'
+      : '<div class="empty">Live transcript is disabled.</div>';
   }
 
-  if (shouldBroadcast) {
+  if (LIVE_TRANSCRIPT_ENABLED && shouldBroadcast) {
     emitMainStageEvent({
       type: 'clear',
       payload: {},
@@ -1404,6 +1369,10 @@ function getTranscriptTextForStudy(): string {
 }
 
 async function importLiveTranscriptToBackend(baseUrl: string): Promise<void> {
+  if (!LIVE_TRANSCRIPT_ENABLED) {
+    return;
+  }
+
   const transcriptText = getTranscriptTextForStudy().trim();
 
   if (!transcriptText) {
@@ -1554,6 +1523,12 @@ function appendMainStageFinal(text: string): void {
 }
 
 function setupMainStageTranscriptBridge(): void {
+  if (!LIVE_TRANSCRIPT_ENABLED) {
+    setMainStageStatus('Live transcript is disabled.');
+    clearMainStageTranscript();
+    return;
+  }
+
   const channel = getMainStageChannel();
   if (!channel) {
     setMainStageStatus('BroadcastChannel not supported in this browser');
@@ -1589,6 +1564,10 @@ function setupMainStageTranscriptBridge(): void {
 }
 
 function setupSidePanelTranscriptBridge(): void {
+  if (!LIVE_TRANSCRIPT_ENABLED) {
+    return;
+  }
+
   const channel = getMainStageChannel();
   if (!channel) {
     return;
@@ -1620,6 +1599,10 @@ function setupSidePanelTranscriptBridge(): void {
 }
 
 function setupRecorderControlBridge(): void {
+  if (!LIVE_TRANSCRIPT_ENABLED) {
+    return;
+  }
+
   const channel = getRecorderControlChannel();
   if (!channel) {
     return;
@@ -1664,6 +1647,10 @@ function openRecorderWindow(autoStart = false): void {
 }
 
 function handleServerMessage(event: MessageEvent): void {
+  if (!LIVE_TRANSCRIPT_ENABLED) {
+    return;
+  }
+
   try {
     const message = JSON.parse(String(event.data)) as TranscriptMessage;
 
@@ -1994,12 +1981,19 @@ export async function initializeMainStage(): Promise<void> {
   });
 
   await session.createMainStageClient();
-  setupMainStageTranscriptBridge();
+  if (LIVE_TRANSCRIPT_ENABLED) {
+    setupMainStageTranscriptBridge();
+  } else {
+    setMainStageStatus('Live transcript is disabled.');
+    clearMainStageTranscript();
+  }
 }
 
 export async function initializeRecorderPage(): Promise<void> {
   initializeBackendUrlInput();
-  setupRecorderControlBridge();
+  if (LIVE_TRANSCRIPT_ENABLED) {
+    setupRecorderControlBridge();
+  }
 
   const startButton = document.getElementById('start-transcription');
   const stopButton = document.getElementById('stop-transcription');
@@ -2009,28 +2003,38 @@ export async function initializeRecorderPage(): Promise<void> {
     throw new Error('Recorder page controls were not found.');
   }
 
-  startButton.addEventListener('click', () => {
-    startTranscription().catch((error) => {
-      setStatus(`Start failed: ${error instanceof Error ? error.message : String(error)}`);
+  if (LIVE_TRANSCRIPT_ENABLED) {
+    startButton.addEventListener('click', () => {
+      startTranscription().catch((error) => {
+        setStatus(`Start failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
     });
-  });
 
-  stopButton.addEventListener('click', () => {
-    stopTranscription().catch((error) => {
-      setStatus(`Stop failed: ${error instanceof Error ? error.message : String(error)}`);
+    stopButton.addEventListener('click', () => {
+      stopTranscription().catch((error) => {
+        setStatus(`Stop failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
     });
-  });
 
-  clearButton.addEventListener('click', () => {
-    clearTranscript();
-  });
+    clearButton.addEventListener('click', () => {
+      clearTranscript();
+    });
+  } else {
+    (startButton as HTMLButtonElement).disabled = true;
+    (stopButton as HTMLButtonElement).disabled = true;
+    (clearButton as HTMLButtonElement).disabled = true;
+  }
 
   clearTranscript();
   setControlState(false);
-  setStatus('Ready to record microphone outside Meet.');
+  setStatus(
+    LIVE_TRANSCRIPT_ENABLED
+      ? 'Ready to record microphone outside Meet.'
+      : 'Live transcript is disabled.'
+  );
 
   const query = new URLSearchParams(window.location.search);
-  if (query.get('autostart') === '1') {
+  if (LIVE_TRANSCRIPT_ENABLED && query.get('autostart') === '1') {
     startTranscription().catch((error) => {
       setStatus(`Start failed: ${error instanceof Error ? error.message : String(error)}`);
     });
