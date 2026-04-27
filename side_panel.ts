@@ -13,6 +13,7 @@ const DEPRECATED_BACKEND_BASE_URLS = new Set<string>([
   'https://study-snap-addon-backend.railway.internal',
   'https://studysnapaddonbackend.railway.internal',
 ]);
+const DISABLE_TRANSCRIPT_DEDUPE_FOR_DEBUG = true;
 
 type MainStageEvent =
   | { type: 'status'; payload: { text: string } }
@@ -1084,7 +1085,9 @@ function applySyncedTranscriptLines(synced: TranscriptSyncResponse): number {
     clearTranscript();
   }
 
-  const startIndex = Math.max(0, liveSyncState.processedLineCount);
+  const startIndex = DISABLE_TRANSCRIPT_DEDUPE_FOR_DEBUG
+    ? 0
+    : Math.max(0, liveSyncState.processedLineCount);
   let appended = 0;
   for (let i = startIndex; i < synced.lines.length; i += 1) {
     const line = String(synced.lines[i] ?? '').trim();
@@ -1158,7 +1161,7 @@ async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<vo
   for (const line of transcript.lines) {
     const seq = Number(line.seq ?? 0);
     const hasValidSeq = Number.isFinite(seq) && seq > 0;
-    if (hasValidSeq && seq <= maxProcessedSeq) {
+    if (!DISABLE_TRANSCRIPT_DEDUPE_FOR_DEBUG && hasValidSeq && seq <= maxProcessedSeq) {
       continue;
     }
 
@@ -1371,7 +1374,14 @@ function getTranscriptTextForStudy(): string {
 async function importLiveTranscriptToBackend(baseUrl: string): Promise<void> {
   const transcriptText = getTranscriptTextForStudy().trim();
 
-  if (!transcriptText || transcriptText === transcriptionState.lastImportedTranscriptText) {
+  if (!transcriptText) {
+    return;
+  }
+
+  if (
+    !DISABLE_TRANSCRIPT_DEDUPE_FOR_DEBUG &&
+    transcriptText === transcriptionState.lastImportedTranscriptText
+  ) {
     return;
   }
 
