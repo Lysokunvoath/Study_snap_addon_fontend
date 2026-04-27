@@ -1120,8 +1120,19 @@ async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<vo
   const transcript = await pollMeetingBotTranscript(baseUrl, botId, botLiveState.latestSeq);
 
   let appendedCount = 0;
+  let maxProcessedSeq = botLiveState.latestSeq;
 
   for (const line of transcript.lines) {
+    const seq = Number(line.seq ?? 0);
+    if (Number.isFinite(seq) && seq > 0) {
+      if (seq <= botLiveState.latestSeq) {
+        continue;
+      }
+      if (seq > maxProcessedSeq) {
+        maxProcessedSeq = seq;
+      }
+    }
+
     const normalizedText = String(line.text ?? '').trim();
     if (!normalizedText) {
       continue;
@@ -1151,7 +1162,7 @@ async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<vo
     });
   }
 
-  botLiveState.latestSeq = transcript.latestSeq;
+  botLiveState.latestSeq = maxProcessedSeq;
   const status = await getMeetingBotStatus(baseUrl, botId);
   setStatus(`Meeting bot ${status.status}. ${status.lineCount} line(s) captured.`);
 }
