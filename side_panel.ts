@@ -1186,8 +1186,54 @@ async function gracefulStopMeetingBotPolling(baseUrl: string, botId: string): Pr
 }
 
 async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<void> {
+  const transcript = await pollMeetingBotTranscript(baseUrl, botId, botLiveState.latestSeq);
+
+  let appendedCount = 0;
+  let maxProcessedSeq = botLiveState.latestSeq;
+
+  for (const line of transcript.lines) {
+    const seq = Number(line.seq ?? 0);
+    const hasValidSeq = Number.isFinite(seq) && seq > 0;
+    if (!DISABLE_TRANSCRIPT_DEDUPE_FOR_DEBUG && hasValidSeq && seq <= maxProcessedSeq) {
+      continue;
+    }
+
+    if (hasValidSeq) {
+      maxProcessedSeq = seq;
+    }
+
+    const normalizedText = String(line.text ?? '').trim();
+    if (!normalizedText) {
+      continue;
+    }
+
+    const speakerPrefix = line.speaker ? `${line.speaker}: ` : '';
+    transcriptLinesBuffer.push(`${speakerPrefix}${normalizedText}`);
+    appendedCount += 1;
+  }
+
+  const transcriptText = getTranscriptTextForStudy();
+  const targetUserId = botLiveState.userId;
+  const normalizedTranscriptText = transcriptText.trim();
+  const shouldImport =
+    !!normalizedTranscriptText &&
+    (appendedCount > 0 || normalizedTranscriptText !== botLiveState.lastImportedTranscriptText);
+
+  if (shouldImport) {
+    await importMeetTranscriptText({
+      baseUrl,
+      transcriptText: normalizedTranscriptText,
+      title: getMeetingTitleForStudy(),
+      botId,
+      userId: targetUserId ?? undefined,
+      meetingUrl: botLiveState.meetingUrl ?? undefined,
+    });
+    botLiveState.lastImportedTranscriptText = normalizedTranscriptText;
+  }
+
+  botLiveState.latestSeq = maxProcessedSeq;
   const status = await getMeetingBotStatus(baseUrl, botId);
-  setStatus(`Meeting bot ${status.status}.`);
+  setStatus(`Meeting bot ${status.status}. ${status.lineCount} line(s) captured.`);
 }
 
 async function beginMeetingBotPolling(baseUrl: string, botId: string): Promise<void> {
