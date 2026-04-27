@@ -132,6 +132,7 @@ type BotLiveState = {
   userId: string | null;
   timerId: number | null;
   latestSeq: number;
+  seenLineSignatures: Set<string>;
 };
 
 type TranscriptionState = {
@@ -173,6 +174,7 @@ const botLiveState: BotLiveState = {
   userId: null,
   timerId: null,
   latestSeq: 0,
+  seenLineSignatures: new Set<string>(),
 };
 
 const transcriptLinesBuffer: string[] = [];
@@ -1098,6 +1100,7 @@ function stopMeetingBotPolling(statusMessage?: string): void {
   botLiveState.meetingUrl = null;
   botLiveState.userId = null;
   botLiveState.latestSeq = 0;
+  botLiveState.seenLineSignatures.clear();
   setMeetingBotButtons(false);
 
   if (statusMessage) {
@@ -1105,17 +1108,35 @@ function stopMeetingBotPolling(statusMessage?: string): void {
   }
 }
 
+function signatureForBotLine(speaker: string | null, text: string): string {
+  return `${(speaker ?? '').trim().toLowerCase()}|${text.trim().toLowerCase()}`;
+}
+
 async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<void> {
   const transcript = await pollMeetingBotTranscript(baseUrl, botId, botLiveState.latestSeq);
 
+  let appendedCount = 0;
+
   for (const line of transcript.lines) {
+    const normalizedText = String(line.text ?? '').trim();
+    if (!normalizedText) {
+      continue;
+    }
+
+    const signature = signatureForBotLine(line.speaker, normalizedText);
+    if (botLiveState.seenLineSignatures.has(signature)) {
+      continue;
+    }
+
+    botLiveState.seenLineSignatures.add(signature);
     const speakerPrefix = line.speaker ? `${line.speaker}: ` : '';
-    appendFinalLine(`${speakerPrefix}${line.text}`);
+    appendFinalLine(`${speakerPrefix}${normalizedText}`);
+    appendedCount += 1;
   }
 
   const transcriptText = getTranscriptTextForStudy();
   const targetUserId = botLiveState.userId;
-  if (transcriptText.trim()) {
+  if (appendedCount > 0 && transcriptText.trim()) {
     await importMeetTranscriptText({
       baseUrl,
       transcriptText,
@@ -1759,6 +1780,7 @@ export async function setUpSidePanel(): Promise<void> {
       botLiveState.meetingUrl = meetingUrl;
       botLiveState.userId = userId;
       botLiveState.latestSeq = 0;
+      botLiveState.seenLineSignatures.clear();
       clearTranscript();
       setMeetingBotButtons(true);
       setStatus(`Meeting bot started (ID: ${started.botId}). Admit it in Meet waiting room.`);
