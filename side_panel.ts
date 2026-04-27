@@ -133,6 +133,7 @@ type BotLiveState = {
   timerId: number | null;
   latestSeq: number;
   seenLineSignatures: Set<string>;
+  isStarting: boolean;
 };
 
 type TranscriptionState = {
@@ -175,6 +176,7 @@ const botLiveState: BotLiveState = {
   timerId: null,
   latestSeq: 0,
   seenLineSignatures: new Set<string>(),
+  isStarting: false,
 };
 
 const transcriptLinesBuffer: string[] = [];
@@ -182,6 +184,7 @@ const transcriptLinesBuffer: string[] = [];
 let mainStageChannel: BroadcastChannel | null = null;
 let recorderControlChannel: BroadcastChannel | null = null;
 let captureWorkletModuleUrl: string | null = null;
+let sidePanelListenersBound = false;
 const USER_KEY_STORAGE_KEY = 'studySnap.userKey';
 const WEBSITE_AUTH_TOKEN_STORAGE_KEY = 'studySnap.websiteAuthToken';
 const WEBSITE_AUTH_USER_STORAGE_KEY = 'studySnap.websiteAuthUser';
@@ -1101,6 +1104,7 @@ function stopMeetingBotPolling(statusMessage?: string): void {
   botLiveState.userId = null;
   botLiveState.latestSeq = 0;
   botLiveState.seenLineSignatures.clear();
+  botLiveState.isStarting = false;
   setMeetingBotButtons(false);
 
   if (statusMessage) {
@@ -1745,7 +1749,22 @@ export async function setUpSidePanel(): Promise<void> {
     return;
   }
 
+  if (sidePanelListenersBound) {
+    return;
+  }
+  sidePanelListenersBound = true;
+
   startMeetingBotButton.addEventListener('click', async () => {
+    if (botLiveState.isStarting) {
+      setStatus('Start bot is already in progress. Please wait...');
+      return;
+    }
+
+    if (botLiveState.botId) {
+      setStatus(`Meeting bot is already running (ID: ${botLiveState.botId}).`);
+      return;
+    }
+
     let meetingUrl = getMeetingUrlInputValue();
 
     if (!meetingUrl) {
@@ -1762,6 +1781,9 @@ export async function setUpSidePanel(): Promise<void> {
     }
 
     try {
+      botLiveState.isStarting = true;
+      setMeetingBotButtons(true);
+
       const baseUrl = getBackendBaseUrl();
       const backendUrlError = getBackendUrlValidationError(baseUrl);
       if (backendUrlError) {
@@ -1781,6 +1803,7 @@ export async function setUpSidePanel(): Promise<void> {
       botLiveState.userId = userId;
       botLiveState.latestSeq = 0;
       botLiveState.seenLineSignatures.clear();
+      botLiveState.isStarting = false;
       clearTranscript();
       setMeetingBotButtons(true);
       setStatus(`Meeting bot started (ID: ${started.botId}). Admit it in Meet waiting room.`);
@@ -1788,6 +1811,11 @@ export async function setUpSidePanel(): Promise<void> {
     } catch (error) {
       stopMeetingBotPolling();
       setStatus(`Start bot failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (!botLiveState.botId) {
+        botLiveState.isStarting = false;
+        setMeetingBotButtons(false);
+      }
     }
   });
 
