@@ -1152,6 +1152,38 @@ function stopMeetingBotPolling(statusMessage?: string): void {
   }
 }
 
+async function gracefulStopMeetingBotPolling(baseUrl: string, botId: string): Promise<void> {
+  // After stopping the bot, continue polling for up to 60 seconds to allow backend
+  // to hydrate the transcript from MeetingBaas and deliver final lines.
+  // MeetingBaas bot.completed webhook → backend hydration → lines available → addon fetches
+  const maxGracePollTicks = 20;
+  let gracePollTicks = 0;
+
+  // Perform one final poll tick immediately
+  await runMeetingBotPollTick(baseUrl, botId);
+  gracePollTicks += 1;
+
+  // Continue polling with grace period
+  if (botLiveState.timerId) {
+    window.clearInterval(botLiveState.timerId);
+  }
+
+  botLiveState.timerId = window.setInterval(async () => {
+    gracePollTicks += 1;
+
+    if (gracePollTicks > maxGracePollTicks) {
+      stopMeetingBotPolling('Meeting bot stopped. (Grace period polling ended.)');
+      return;
+    }
+
+    await runMeetingBotPollTick(baseUrl, botId).catch((error) => {
+      stopMeetingBotPolling(
+        `Meeting bot polling stopped: ${error instanceof Error ? error.message : String(error)}`
+      );
+    });
+  }, 3000);
+}
+
 async function runMeetingBotPollTick(baseUrl: string, botId: string): Promise<void> {
   const transcript = await pollMeetingBotTranscript(baseUrl, botId, botLiveState.latestSeq);
 
@@ -1927,7 +1959,9 @@ export async function setUpSidePanel(): Promise<void> {
     try {
       const baseUrl = getBotBackendBaseUrl();
       await stopMeetingBot(baseUrl, botId);
-      stopMeetingBotPolling('Meeting bot stopped.');
+      setStatus('Meeting bot stopping. Waiting for transcript hydration (up to 60 seconds)...');
+      // Continue polling for grace period to allow backend to hydrate transcript
+      await gracefulStopMeetingBotPolling(baseUrl, botId);
     } catch (error) {
       setStatus(`Stop bot failed: ${error instanceof Error ? error.message : String(error)}`);
     }
