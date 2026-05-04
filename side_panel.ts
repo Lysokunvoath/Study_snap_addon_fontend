@@ -13,7 +13,7 @@ const DEPRECATED_BACKEND_BASE_URLS = new Set<string>([
   'https://study-snap-addon-backend.railway.internal',
   'https://studysnapaddonbackend.railway.internal',
 ]);
-const LIVE_TRANSCRIPT_ENABLED = false;
+const LIVE_TRANSCRIPT_ENABLED = true;
 const DISABLE_TRANSCRIPT_DEDUPE_FOR_DEBUG = true;
 
 type MainStageEvent =
