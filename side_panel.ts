@@ -6,8 +6,9 @@ const RECORDER_CONTROL_CHANNEL_NAME = 'study-snap-recorder-control';
 const BACKEND_URL_STORAGE_KEY = 'studySnap.backendUrl';
 const APP_USER_ID_STORAGE_KEY = 'studySnap.appUserId';
 const DEFAULT_BACKEND_BASE_URL =
-  'https://studysnapaddonbackend-production-45ff.up.railway.app';
+  'https://studysnapaddonbackend-production-2340.up.railway.app';
 const DEPRECATED_BACKEND_BASE_URLS = new Set<string>([
+  'https://studysnapaddonbackend-production-45ff.up.railway.app',
   'https://study-snap-addon-backend.up.railway.app',
   'https://studysnapaddonbackend-production.up.railway.app',
   'https://study-snap-addon-backend.railway.internal',
